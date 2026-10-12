@@ -1,0 +1,7 @@
+{
+  "tool_name": "Bash",
+  "tool_input_preview": "{\"command\":\"SP=/private/tmp/claude-501/-Users-almazamanzholuly-Documents-store-app-staff-interface/112a9dc2-0983-4520-a333-df9e4640376f/scratchpad; sed -i '' 's/getByLabel(\\\"Новый пароль\\\")/getByLabel...",
+  "error": "Exit code 1\ntitle: Профиль · Tolyq\nheader name: Айдана К.\nwrong current shown: 1\nchanged shown: 1\nold pw rejected: false\nnode:internal/modules/run_main:122\n    triggerUncaughtException(\n    ^\n\npage.waitForURL: Timeout 30000ms exceeded.\n=========================== logs ===========================\nwaiting for navigation to \"http://localhost:5179/\" until \"load\"\n============================================================\n    at /private/tmp/claude-501/-Users-almazamanzholuly-Documents-store-app-sta...",
+  "timestamp": "2026-10-12T13:06:16.717Z",
+  "retry_count": 2
+}

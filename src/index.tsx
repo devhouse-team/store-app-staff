@@ -1,13 +1,12 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-
+import "@ant-design/v5-patch-for-react-19";
+import "@fontsource-variable/inter";
+import "./index.css";
 import App from "./App";
 
-const container = document.getElementById("root") as HTMLElement;
-const root = createRoot(container);
-
-root.render(
+createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />
-  </React.StrictMode>
+  </React.StrictMode>,
 );

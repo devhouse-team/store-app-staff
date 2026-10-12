@@ -1,0 +1,11 @@
+body { background: #FAFAF6; }
+/* Tabular figures for money, quantities, weights (DESIGN.md §3.2). */
+.ant-table, .num { font-variant-numeric: tabular-nums; }
+:focus-visible { outline: 2px solid #176B50; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+@media print { .ant-layout-sider, .ant-layout-header, .no-print { display: none !important; } }
+/* Mobile: Refine's floating sider toggle (top-left) would cover the first row of every page. */
+@media (max-width: 991px) { .ant-layout-content { padding-top: 56px !important; } }
+/* Header attention buttons with pending items: visible hover / press feedback on the soft-green fill. */
+.attn-hot:hover { background: #D4EDDC !important; border-color: #176B50 !important; }
+.attn-hot:active { background: #B9DCC5 !important; }
