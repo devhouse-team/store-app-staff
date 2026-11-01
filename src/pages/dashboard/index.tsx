@@ -32,8 +32,8 @@ export const Dashboard = () => {
   const { open } = useNotification();
   const period = { date_from: range[0].format("YYYY-MM-DD"), date_to: range[1].format("YYYY-MM-DD"), mode: mode === "all" ? undefined : mode };
 
-  const { result, query } = useCustom<DashboardData>({ url: "/admin/analytics/dashboard", method: "get", config: { query: period } });
-  const d = result?.data;
+  const { query } = useCustom<DashboardData>({ url: "/admin/analytics/dashboard", method: "get", config: { query: period } });
+  const d = query.data?.data; // not result.data: Refine 5 gives {} there before the first response, which crashed the page
   const s = d?.summary[mode];
   const loading = query.isLoading;
   const exportCsv = () =>
