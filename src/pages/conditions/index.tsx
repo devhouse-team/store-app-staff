@@ -36,12 +36,11 @@ export const ConditionList = () => {
   });
   const { mutate: update, mutation: { isPending, variables } } = useUpdate<Condition>();
 
-  // ponytail: whole lookup tables are loaded — fine for the mock; use getMany by ids once the catalogue is large.
+  // ponytail: whole lookup tables are loaded (100-row pages); use getMany by ids once the catalogue is large.
   const all = { pagination: { mode: "off" as const } };
   const { result: cats } = useList<Category>({ resource: "categories", ...all });
   const { result: prods } = useList<Product>({ resource: "products", ...all });
   const { result: custs } = useList<Customer>({ resource: "customers", ...all });
-  const { result: conds } = useList<Condition>({ resource: "conditions", ...all });
   const name = <T extends { id: string; name: string }>(rows: T[], id: string | null) => rows.find((r) => r.id === id)?.name ?? "—";
 
   const rows = [...(tableProps.dataSource ?? [])].sort((a, b) => PRIORITY[a.scope] - PRIORITY[b.scope]);
@@ -90,7 +89,7 @@ export const ConditionList = () => {
           </Space>
         )} />
       </Table>
-      <Preview conditions={conds.data} products={prods.data.filter((p) => !p.hidden)} categories={cats.data} customers={custs.data} />
+      <Preview products={prods.data.filter((p) => !p.hidden)} customers={custs.data} />
     </List>
   );
 };

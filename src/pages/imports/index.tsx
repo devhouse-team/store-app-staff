@@ -1,142 +1,86 @@
 import { List, useTable } from "@refinedev/antd";
-import { useCreate, useDataProvider, useGetIdentity, useInvalidate, useList } from "@refinedev/core";
-import { CheckCircleOutlined, DownloadOutlined, ExportOutlined, InboxOutlined, WarningOutlined } from "@ant-design/icons";
-import { Alert, App, Button, Card, Popconfirm, Space, Table, Tag, Typography, Upload } from "antd";
+import { useCustomMutation, useInvalidate, useNotification, useOne } from "@refinedev/core";
+import { CheckCircleOutlined, DownloadOutlined, ExportOutlined, InboxOutlined, SyncOutlined, WarningOutlined } from "@ant-design/icons";
+import { Alert, Button, Card, Popconfirm, Space, Table, Tag, Typography, Upload } from "antd";
 import { useState } from "react";
-import type { Category, ImportJob, Product, Stock } from "../../types";
+import type { ImportJob } from "../../types";
 import { dateTime } from "../../lib/format";
-import { newProductId, normalizePacks, stockUnit } from "../products/packs";
-import { COLUMNS, TEMPLATE_EXAMPLE, downloadCsv, exportRows, parseCsv, validate, type ImportError } from "./csv";
+import { download } from "../../providers/api";
 
-type Parsed = { fileName: string } & ReturnType<typeof validate>;
-
-const STATUS: Record<ImportJob["status"], { label: string; color: string; icon: React.ReactNode }> = {
-  ok: { label: "Без ошибок", color: "blue", icon: <CheckCircleOutlined /> },
-  errors: { label: "Есть ошибки", color: "red", icon: <WarningOutlined /> },
-  applied: { label: "Применён", color: "green", icon: <CheckCircleOutlined /> },
+// The backend parses and validates the file (.xlsx or .csv by its template) — B12.
+type Result = {
+  id: number; status: ImportJob["status"]; dry_run: boolean; total_rows: number; ok_rows: number; error_rows: number;
+  summary: Record<string, number | string>; errors?: { row_number: number | null; level: string; message: string }[];
 };
 
-const ErrorTable = ({ errors }: { errors: ImportError[] }) => (
+const STATUS: Record<ImportJob["status"], { label: string; color: string; icon: React.ReactNode }> = {
+  pending: { label: "В очереди", color: "default", icon: <SyncOutlined /> },
+  running: { label: "Выполняется", color: "blue", icon: <SyncOutlined spin /> },
+  completed: { label: "Готово", color: "green", icon: <CheckCircleOutlined /> },
+  failed: { label: "Ошибка", color: "red", icon: <WarningOutlined /> },
+};
+const STATS: Record<string, string> = {
+  products_created: "товаров создано", products_updated: "товаров обновлено", packs_created: "фасовок создано",
+  packs_updated: "фасовок обновлено", stock_changed: "остатков изменено", categories_created: "категорий создано",
+};
+const statsLine = (s: Record<string, unknown>) =>
+  typeof s.error === "string" ? s.error : Object.entries(STATS).map(([k, l]) => `${l}: ${s[k] ?? 0}`).join(" · ");
+
+const ErrorTable = ({ errors }: { errors: { row: number | null; message: string }[] }) => (
   <Table
     dataSource={errors}
-    rowKey={(e) => `${e.row}-${e.field}-${e.message}`}
+    rowKey={(e) => `${e.row}-${e.message}`}
     size="small"
     scroll={{ x: true }}
     pagination={errors.length > 20 ? { pageSize: 20 } : false}
     columns={[
-      { title: "Строка", dataIndex: "row", width: 80 },
-      { title: "Поле", dataIndex: "field" },
+      { title: "Строка", dataIndex: "row", width: 80, render: (v) => v ?? "—" },
       { title: "Ошибка", dataIndex: "message" },
     ]}
   />
 );
 
+const JobErrors = ({ id }: { id: string }) => {
+  const { result, query } = useOne<ImportJob>({ resource: "imports", id });
+  if (query.isLoading) return <Typography.Text type="secondary">Загрузка…</Typography.Text>;
+  return <ErrorTable errors={result?.errors ?? []} />;
+};
+
 export const ImportList = () => {
-  const { message } = App.useApp();
-  const { data: me } = useGetIdentity<{ name: string }>();
-  const { result: cats } = useList<Category>({ resource: "categories", pagination: { mode: "off" } });
-  const { result: prods } = useList<Product>({ resource: "products", pagination: { mode: "off" } });
-  const { result: stock } = useList<Stock>({ resource: "stock", pagination: { mode: "off" } });
-  const { mutateAsync: createJob } = useCreate<ImportJob>();
-  const dataProvider = useDataProvider();
+  const { open } = useNotification();
   const invalidate = useInvalidate();
-  const [parsed, setParsed] = useState<Parsed | null>(null);
-  const [busy, setBusy] = useState(false);
-  const { tableProps } = useTable<ImportJob>({
-    resource: "imports",
-    syncWithLocation: false,
-    sorters: { initial: [{ field: "createdAt", order: "desc" }] },
-  });
+  const [file, setFile] = useState<File | null>(null);
+  const [checked, setChecked] = useState<Result | null>(null);
+  const { mutateAsync: upload, mutation } = useCustomMutation<Result>();
+  const { tableProps, tableQuery } = useTable<ImportJob>({ resource: "imports", syncWithLocation: false });
 
-  const staff = me?.name ?? "—";
-  const toCreate = parsed?.drafts.filter((d) => !d.existingId).length ?? 0;
-  const toUpdate = (parsed?.drafts.length ?? 0) - toCreate;
-
-  const job = (p: Partial<ImportJob>) =>
-    createJob({
-      resource: "imports",
-      values: { fileName: parsed?.fileName, dryRun: true, status: "ok", rows: 0, created: 0, updated: 0, errors: [], staff, createdAt: new Date().toISOString(), ...p },
-      successNotification: false,
+  const send = async (dryRun: boolean) => {
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
+    form.append("dry_run", String(dryRun));
+    const { data } = await upload({ url: "/admin/import/upload", method: "post", values: form as never, successNotification: false });
+    await tableQuery.refetch();
+    if (dryRun) return setChecked(data);
+    open?.({
+      type: data.status === "failed" ? "error" : "success",
+      message: data.status === "pending" ? "Файл большой — импорт выполняется в фоне" : `Импорт: ${STATUS[data.status].label.toLowerCase()}`,
+      description: statsLine(data.summary),
     });
-
-  const onFile = async (file: File) => {
-    if (/\.xlsx?$/i.test(file.name)) {
-      setParsed(null);
-      // ponytail: Excel is parsed by the backend (B12); the mock only records the job.
-      await job({ fileName: file.name });
-      message.info("Файл Excel принят: разбор выполняется на сервере. В мок-режиме создана задача без строк — для проверки здесь загрузите CSV.");
-      return;
-    }
-    const res = validate(parseCsv(await file.text()), { categories: cats.data, products: prods.data });
-    setParsed({ fileName: file.name, ...res });
+    setFile(null);
+    setChecked(null);
+    for (const resource of ["products", "stock", "categories"]) await invalidate({ resource, invalidates: ["list", "many", "detail"] });
   };
-
-  const dryRun = async () => {
-    if (!parsed) return;
-    await job({ dryRun: true, status: parsed.errors.length ? "errors" : "ok", rows: parsed.rows, created: toCreate, updated: toUpdate, errors: parsed.errors });
-    message.success("Проверка сохранена в истории. Данные каталога не изменены.");
-  };
-
-  const apply = async () => {
-    if (!parsed || parsed.errors.length) return;
-    setBusy(true);
-    const dp = dataProvider();
-    const now = new Date().toISOString();
-    const reason = `Импорт: ${parsed.fileName}`;
-    try {
-      for (const [i, d] of parsed.drafts.entries()) {
-        const existing = prods.data.find((p) => p.id === d.existingId);
-        const id = existing?.id ?? `${newProductId()}${i}`;
-        // Keep pack ids by label so existing orders keep pointing at the same pack.
-        const packs = normalizePacks(
-          d.packs.map((k) => ({ ...k, id: existing?.packs.find((e) => e.label === k.label)?.id })),
-          id,
-        );
-        if (existing) await dp.update({ resource: "products", id, variables: { ...d.product, packs } });
-        else
-          await dp.create({
-            resource: "products",
-            variables: { id, ...d.product, imageUrl: null, description: null, hidden: false, packs },
-          });
-
-        const s = stock.data.find((x) => x.id === id);
-        const qty = d.stock ?? s?.quantity ?? 0;
-        const delta = qty - (s?.quantity ?? 0);
-        const stockVars = { productName: d.product.name, unit: stockUnit(d.product), quantity: qty };
-        if (s) await dp.update({ resource: "stock", id, variables: stockVars });
-        else await dp.create({ resource: "stock", variables: { id, productId: id, reserved: 0, lowThreshold: 5, ...stockVars } });
-        if (delta)
-          await dp.create({
-            resource: "stock_movements",
-            variables: { productId: id, productName: d.product.name, delta, reason, staff, createdAt: now },
-          });
-      }
-      await job({ dryRun: false, status: "applied", rows: parsed.rows, created: toCreate, updated: toUpdate });
-      message.success(`Импорт применён: создано ${toCreate}, обновлено ${toUpdate}`);
-      setParsed(null);
-    } catch (e) {
-      message.error(`Импорт прерван: ${(e as Error)?.message ?? "ошибка"}. Часть строк могла сохраниться — повторите импорт.`);
-    } finally {
-      await invalidate({ resource: "products", invalidates: ["list", "many", "detail"] });
-      await invalidate({ resource: "stock", invalidates: ["list", "many", "detail"] });
-      await invalidate({ resource: "stock_movements", invalidates: ["list"] });
-      setBusy(false);
-    }
-  };
-
-  const exportCatalog = () => {
-    const qty = new Map(stock.data.map((s) => [s.id, s.quantity]));
-    downloadCsv(`catalog_${new Date().toISOString().slice(0, 10)}.csv`, [[...COLUMNS], ...exportRows(prods.data, cats.data, qty)]);
-  };
+  const fail = (e: Error) => open?.({ type: "error", message: "Не удалось скачать файл", description: e.message });
 
   return (
     <List
       headerButtons={
         <Space wrap>
-          <Button icon={<DownloadOutlined />} onClick={() => downloadCsv("tolyq_import_template.csv", [[...COLUMNS], ...TEMPLATE_EXAMPLE])}>
+          <Button icon={<DownloadOutlined />} onClick={() => download("/admin/import/template", "tolyq_import_template.xlsx", { examples: true }).catch(fail)}>
             Скачать шаблон
           </Button>
-          <Button icon={<ExportOutlined />} onClick={exportCatalog} disabled={!prods.data.length}>
+          <Button icon={<ExportOutlined />} onClick={() => download("/admin/import/export", `catalog_${new Date().toISOString().slice(0, 10)}.xlsx`).catch(fail)}>
             Экспорт каталога
           </Button>
         </Space>
@@ -149,54 +93,36 @@ export const ImportList = () => {
             multiple={false}
             showUploadList={false}
             beforeUpload={(f) => {
-              onFile(f);
+              setFile(f);
+              setChecked(null);
               return false;
             }}
           >
             <p className="ant-upload-drag-icon">
               <InboxOutlined />
             </p>
-            <p className="ant-upload-text">Перетащите файл или нажмите, чтобы выбрать</p>
-            <p className="ant-upload-hint">CSV по шаблону (разделитель «;» или «,», UTF-8). Excel (.xlsx) разбирается на сервере.</p>
+            <p className="ant-upload-text">{file ? file.name : "Перетащите файл или нажмите, чтобы выбрать"}</p>
+            <p className="ant-upload-hint">Excel (.xlsx) или CSV по шаблону. Сначала проверьте файл без сохранения.</p>
           </Upload.Dragger>
-        </Card>
-
-        {parsed && (
-          <Card size="small" title={`Файл: ${parsed.fileName}`}>
-            <Space direction="vertical" style={{ width: "100%" }}>
-              {parsed.errors.length ? (
-                <Alert
-                  type="error"
-                  showIcon
-                  message={`Найдено ошибок: ${parsed.errors.length}. Исправьте файл и загрузите снова — применить можно только файл без ошибок.`}
-                />
-              ) : (
-                <Alert type="success" showIcon message="Ошибок не найдено" />
-              )}
-              <Typography.Text style={{ fontVariantNumeric: "tabular-nums" }}>
-                Строк: {parsed.rows} · товаров: {parsed.drafts.length} · будет создано: {toCreate} · будет обновлено: {toUpdate}
-              </Typography.Text>
+          {file && (
+            <Space direction="vertical" style={{ width: "100%", marginTop: 12 }}>
+              {checked &&
+                (checked.error_rows ? (
+                  <Alert type="error" showIcon message={`Строк с ошибками: ${checked.error_rows} из ${checked.total_rows}. Исправьте файл и загрузите снова.`} />
+                ) : (
+                  <Alert type="success" showIcon message={`Ошибок не найдено. Строк: ${checked.total_rows}.`} description={statsLine(checked.summary)} />
+                ))}
               <Space wrap>
-                <Button onClick={dryRun} disabled={busy}>
-                  Проверить без сохранения
-                </Button>
-                <Popconfirm
-                  title="Применить импорт?"
-                  description={`Создать ${toCreate} и обновить ${toUpdate} товаров, обновить остатки.`}
-                  okText="Применить"
-                  cancelText="Отмена"
-                  onConfirm={apply}
-                  disabled={!!parsed.errors.length || !parsed.drafts.length}
-                >
-                  <Button type="primary" loading={busy} disabled={!!parsed.errors.length || !parsed.drafts.length}>
-                    Применить
-                  </Button>
+                <Button onClick={() => send(true)} loading={mutation.isPending}>Проверить без сохранения</Button>
+                <Popconfirm title="Применить импорт?" description="Товары, фасовки и остатки обновятся по файлу." okText="Применить" cancelText="Отмена"
+                  onConfirm={() => send(false)} disabled={!checked || !!checked.error_rows}>
+                  <Button type="primary" loading={mutation.isPending} disabled={!checked || !!checked.error_rows}>Применить</Button>
                 </Popconfirm>
               </Space>
-              {parsed.errors.length > 0 && <ErrorTable errors={parsed.errors} />}
+              {!!checked?.errors?.length && <ErrorTable errors={checked.errors.map((e) => ({ row: e.row_number, message: e.message }))} />}
             </Space>
-          </Card>
-        )}
+          )}
+        </Card>
 
         <Card size="small" title="История импортов">
           <Table
@@ -205,31 +131,18 @@ export const ImportList = () => {
             size="small"
             scroll={{ x: true }}
             locale={{ emptyText: "Импортов ещё не было" }}
-            expandable={{
-              rowExpandable: (j) => j.errors.length > 0,
-              expandedRowRender: (j) => <ErrorTable errors={j.errors} />,
-            }}
+            expandable={{ rowExpandable: (j) => j.errorRows > 0, expandedRowRender: (j) => <JobErrors id={j.id} /> }}
             columns={[
-              { title: "Файл", dataIndex: "fileName" },
-              { title: "Дата", dataIndex: "createdAt", render: dateTime, sorter: true },
-              { title: "Сотрудник", dataIndex: "staff" },
+              { title: "Файл", dataIndex: "fileName", render: (v) => v ?? "—" },
+              { title: "Дата", dataIndex: "createdAt", render: dateTime },
               { title: "Режим", dataIndex: "dryRun", render: (v) => (v ? "Проверка" : "Применение") },
               { title: "Строк", dataIndex: "rows", align: "right" },
-              {
-                title: "Создано / обновлено",
-                key: "cu",
-                align: "right",
-                render: (_, j) => <span style={{ fontVariantNumeric: "tabular-nums" }}>{j.created} / {j.updated}</span>,
-              },
+              { title: "С ошибками", dataIndex: "errorRows", align: "right" },
+              { title: "Итог", dataIndex: "summary", render: (s: ImportJob["summary"]) => <Typography.Text type="secondary">{statsLine(s)}</Typography.Text> },
               {
                 title: "Статус",
                 dataIndex: "status",
-                render: (s: ImportJob["status"], j) => (
-                  <Tag color={STATUS[s].color} icon={STATUS[s].icon}>
-                    {STATUS[s].label}
-                    {j.errors.length ? ` (${j.errors.length})` : ""}
-                  </Tag>
-                ),
+                render: (s: ImportJob["status"]) => <Tag color={STATUS[s].color} icon={STATUS[s].icon}>{STATUS[s].label}</Tag>,
               },
             ]}
           />

@@ -1,8 +1,9 @@
 # Tolyq Staff — план (поток A, админка)
 
-Стек: Refine 5 + Vite + Ant Design 5 + vite-plugin-pwa. Данные — мок (`src/mock/seed.ts`, in-memory
-DataProvider с сохранением в localStorage, `src/providers/data.ts`). Бэкенд (B2) подключается заменой
-`dataProvider`/`authProvider`, страницы трогать не нужно.
+Стек: Refine 5 + Vite + Ant Design 5 + vite-plugin-pwa. Данные — бэкенд `/api/v1/admin/*`
+(контракт `backend/backend/openapi.json`): `src/providers/api.ts` (fetch, cookie-сессия, `X-CSRF-Token`),
+`src/providers/data.ts` (ресурс Refine → эндпоинт + маппинг полей в типы `src/types.ts`), `src/providers/auth.ts`.
+Цены и итоги считает только сервер.
 
 | Задача | Раздел | Файлы |
 |---|---|---|
@@ -17,15 +18,18 @@ DataProvider с сохранением в localStorage, `src/providers/data.ts`)
 | A8 Доставка | зоны, тарифы, слоты, самовывоз, курьеры | `pages/delivery`, `pages/couriers` |
 | A9 Дашборд/журнал/настройки | KPI, топы, низкие остатки, журнал, реквизиты, счётчики «требует внимания» (B20) | `pages/dashboard`, `pages/audit`, `pages/settings` |
 
-Мок-вход: `admin@tolyq.kz` / `admin123` (блокировка после 5 ошибок).
-Сброс мок-данных: `localStorage.removeItem("tolyq-staff-db-v1")`.
+Вход: учётка сотрудника на сервере (почта + пароль), сброс пароля — ссылкой на почту.
 
 ## Запуск
-`npm run dev` → http://localhost:5173 · сборка с PWA: `npm run build && npm start`.
-Самопроверки: `node --experimental-strip-types src/pages/orders/recalc.check.ts`,
-`node --experimental-strip-types src/pages/imports/csv.check.ts`, `npx tsx src/pages/conditions/preview.check.ts`.
+`npm run dev` → http://localhost:5173. В dev `VITE_API_URL` пуст: запросы идут на относительный `/api`,
+Vite проксирует их на `https://api.tolyq-store.kz` (`vite.config.ts`, другой адрес — `VITE_PROXY_TARGET`).
+Сборка: `npm run build` берёт `VITE_API_URL=https://api.tolyq-store.kz` из `.env.production`
+(CORS бэкенда пускает только `https://admin.tolyq-store.kz`). PWA: `npm run build && npm start`.
+Самопроверка контракта: `npx tsx src/providers/data.check.ts` (запросы сверяются с `openapi.json`).
 
-## Что ждёт бэкенда
-Замена `providers/data.ts` и `providers/auth.ts` (B2, B19); дашборд считает в браузере (→ B13);
-решение по опт-заявке — два запроса (→ одна транзакция B6); импорт применяется построчно (→ batch B12);
-Excel разбирает сервер (B12); подписанные ссылки на документы (B6).
+## Чего нет в API (страницы работают без этого)
+Поиск заказов по имени/телефону и фильтр по нескольким статусам сразу; сортировка списков (порядок задаёт сервер);
+отметка «предзаказ» у позиции заказа (только показ); телефон сотрудника и смена пароля без письма;
+WhatsApp/Telegram-группа персонала и флаг онлайн-оплаты в настройках; отдельный мин. заказ опта в зоне
+(задаётся условием); «заказы по статусам» и «выручка по дням» на дашборде; имя сотрудника в журнале движений
+остатков; покупатель/БИН в списке накладных.

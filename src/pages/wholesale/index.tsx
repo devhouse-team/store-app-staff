@@ -1,37 +1,41 @@
-import { useShow, useUpdate, type CrudFilter } from "@refinedev/core";
+import { useShow, useUpdate } from "@refinedev/core";
 import { List, Show, useTable } from "@refinedev/antd";
 import { Alert, Button, Card, Descriptions, Empty, Form, Input, List as AntList, Popconfirm, Segmented, Space, Table, Tag, Typography } from "antd";
 import { Link } from "react-router";
 import type { WholesaleRequest, WholesaleStatus } from "../../types";
 import { WHOLESALE_STATUS, dateTime } from "../../lib/format";
 
-const QUEUE: CrudFilter = { field: "status", operator: "in", value: ["pending", "documents_requested"] };
 const StatusTag = ({ s }: { s: WholesaleStatus }) => <Tag color={WHOLESALE_STATUS[s].color}>{WHOLESALE_STATUS[s].label}</Tag>;
 const size = (b: number) => (b < 1024 * 1024 ? `${Math.round(b / 1024)} КБ` : `${(b / 1024 / 1024).toFixed(1)} МБ`);
 
+type View = WholesaleStatus | "all";
+
 export const WholesaleList = () => {
+  // The API filters by one status at a time, so the queue is split into its two states.
   const { tableProps, filters, setFilters } = useTable<WholesaleRequest>({
-    filters: { initial: [QUEUE] },
-    sorters: { initial: [{ field: "submittedAt", order: "asc" }] },
+    syncWithLocation: false,
+    filters: { initial: [{ field: "status", operator: "eq", value: "pending" }] },
   });
-  const view = filters.some((f) => "field" in f && f.field === "status") ? "queue" : "all";
+  const view = ((filters.find((f) => "field" in f && f.field === "status")?.value as WholesaleStatus | undefined) ?? "all") as View;
 
   return (
     <List>
-      <Segmented
+      <Segmented<View>
         style={{ marginBottom: 16 }}
         value={view}
-        onChange={(v) => setFilters(v === "queue" ? [QUEUE] : [], "replace")}
-        options={[{ value: "queue", label: "Очередь" }, { value: "all", label: "Все заявки" }]}
+        onChange={(v) => setFilters(v === "all" ? [] : [{ field: "status", operator: "eq", value: v }], "replace")}
+        options={[
+          { value: "pending", label: "На рассмотрении" },
+          { value: "documents_requested", label: "Нужны документы" },
+          { value: "all", label: "Все заявки" },
+        ]}
       />
       <Table {...tableProps} rowKey="id" size="small" scroll={{ x: true }}>
         <Table.Column<WholesaleRequest> dataIndex="orgName" title="Организация" render={(v, r) => <Link to={`/wholesale/${r.id}`}>{v}</Link>} />
         <Table.Column dataIndex="bin" title="БИН/ИИН" />
-        <Table.Column dataIndex="contactPerson" title="Контакт" />
-        <Table.Column dataIndex="phone" title="Телефон" render={(v) => <span style={{ whiteSpace: "nowrap" }}>{v}</span>} />
-        <Table.Column<WholesaleRequest> dataIndex="documents" title="Документов" align="right" render={(d: unknown[]) => d.length} />
+        <Table.Column<WholesaleRequest> dataIndex="customerId" title="Клиент" render={(v) => <Link to={`/customers/${v}`}>Профиль</Link>} />
         <Table.Column<WholesaleRequest> dataIndex="status" title="Статус" render={(s: WholesaleStatus) => <StatusTag s={s} />} />
-        <Table.Column dataIndex="submittedAt" title="Подана" sorter render={dateTime} />
+        <Table.Column dataIndex="submittedAt" title="Подана" render={dateTime} />
       </Table>
     </List>
   );
@@ -51,15 +55,7 @@ export const WholesaleShow = () => {
       form.setFields([{ name: "commentToCustomer", errors: ["Напишите клиенту, что нужно сделать — он увидит это в приложении"] }]);
       return;
     }
-    // ponytail: two calls in the mock; the backend (B6) does this in one transaction on PATCH /wholesale-requests/:id.
-    await mutateAsync({
-      resource: "customers",
-      id: r.customerId,
-      values: status === "approved"
-        ? { wholesaleStatus: status, mode: "wholesale", orgName: r.orgName, bin: r.bin }
-        : { wholesaleStatus: status, ...(status === "rejected" && { mode: "retail" }) },
-      successNotification: false,
-    });
+    // One PATCH: the backend switches the customer's mode in the same transaction (B6).
     await mutateAsync({
       resource: "wholesale_requests",
       id: r.id,
@@ -95,7 +91,7 @@ export const WholesaleShow = () => {
               locale={{ emptyText: <Empty description="Документы не загружены" /> }}
               renderItem={(d) => (
                 <AntList.Item actions={[
-                  // In prod `url` is a short-lived signed link to the private bucket (B6); here it is a mock.
+                  // `url` is a short-lived signed link to the private bucket (B6).
                   <a key="open" href={d.url} target="_blank" rel="noopener noreferrer">Открыть</a>,
                 ]}>
                   <AntList.Item.Meta title={d.name} description={<span className="num">{size(d.sizeBytes)}</span>} />

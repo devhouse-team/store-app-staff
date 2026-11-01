@@ -1,5 +1,5 @@
 import { Create, Edit, useForm } from "@refinedev/antd";
-import { useCreate, useList, useUpdate, type HttpError } from "@refinedev/core";
+import { useList, type HttpError } from "@refinedev/core";
 import { DeleteOutlined, PlusOutlined, UploadOutlined } from "@ant-design/icons";
 import {
   App,
@@ -20,34 +20,39 @@ import {
   Upload,
 } from "antd";
 import type { FormInstance, FormProps } from "antd";
-import type { Category, Pack, Product, Stock } from "../../types";
+import { useEffect, useState } from "react";
+import type { Category, Pack, Product } from "../../types";
 import { categoryTreeData } from "../categories/tree";
-import { UNITS, VISIBILITY, hasRetail, hasWholesale, newProductId, normalizePacks, stockUnit } from "./packs";
+import { UNITS, VISIBILITY, hasRetail, hasWholesale, normalizePacks } from "./packs";
 
 type PackValues = Omit<Pack, "id"> & { id?: string };
-type Values = Omit<Product, "id" | "packs"> & { packs: PackValues[] };
+// imageUrl: existing photo URL, a newly picked File (uploaded by the data provider after save) or null (remove).
+type Values = Omit<Product, "id" | "packs" | "imageUrl" | "imageKeys"> & { packs: PackValues[]; imageUrl: string | File | null };
 
-const MAX_IMAGE_BYTES = 1024 * 1024; // mock keeps data URLs in localStorage; real upload goes to S3 (B5)
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
-const ImageField = ({ value, onChange }: { value?: string | null; onChange?: (v: string | null) => void }) => {
+const ImageField = ({ value, onChange }: { value?: string | File | null; onChange?: (v: File | null) => void }) => {
   const { message } = App.useApp();
+  const [src, setSrc] = useState<string>();
+  useEffect(() => {
+    if (!(value instanceof File)) return setSrc(value ?? undefined);
+    const url = URL.createObjectURL(value);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [value]);
   return (
     <Space align="start" wrap>
-      {value ? (
-        <Image src={value} width={96} height={96} style={{ objectFit: "cover" }} alt="Фото товара" />
-      ) : null}
+      {src ? <Image src={src} width={96} height={96} style={{ objectFit: "cover" }} alt="Фото товара" /> : null}
       <Space direction="vertical" size={4}>
         <Upload
           accept="image/*"
           showUploadList={false}
           beforeUpload={(file) => {
             if (file.size > MAX_IMAGE_BYTES) {
-              message.error("Файл больше 1 МБ");
+              message.error("Файл больше 5 МБ");
               return Upload.LIST_IGNORE;
             }
-            const reader = new FileReader();
-            reader.onload = () => onChange?.(reader.result as string);
-            reader.readAsDataURL(file);
+            onChange?.(file);
             return false;
           }}
         >
@@ -58,7 +63,7 @@ const ImageField = ({ value, onChange }: { value?: string | null; onChange?: (v:
             Удалить фото
           </Button>
         ) : null}
-        <Typography.Text type="secondary">Квадратное фото 1:1, от 800×800 px, до 1 МБ</Typography.Text>
+        <Typography.Text type="secondary">Квадратное фото 1:1, от 800×800 px, до 5 МБ. Сохраняется вместе с товаром.</Typography.Text>
       </Space>
     </Space>
   );
@@ -66,7 +71,6 @@ const ImageField = ({ value, onChange }: { value?: string | null; onChange?: (v:
 
 const emptyPack: PackValues = {
   label: "",
-  unit: "шт",
   baseQty: 1,
   retailPrice: null,
   wholesalePrice: null,
@@ -109,11 +113,6 @@ const PacksField = ({ form }: { form: FormInstance<Values> }) => (
                 <Col xs={24} sm={12} md={6}>
                   <Form.Item label="Название фасовки" name={[name, "label"]} rules={[{ required: true, whitespace: true, message: "Например, «10 кг»" }]}>
                     <Input placeholder="10 кг" />
-                  </Form.Item>
-                </Col>
-                <Col xs={12} sm={6} md={3}>
-                  <Form.Item label="Ед." name={[name, "unit"]} rules={[{ required: true, message: "Выберите" }]}>
-                    <Select options={UNITS.map((u) => ({ value: u, label: u }))} />
                   </Form.Item>
                 </Col>
                 <Col xs={12} sm={6} md={4}>
@@ -232,6 +231,11 @@ const ProductForm = ({
             <Input />
           </Form.Item>
         </Col>
+        <Col xs={12} sm={6} md={3}>
+          <Form.Item label="Базовая ед." name="baseUnit" rules={[{ required: true, message: "Выберите" }]} tooltip="В ней считаются остаток и «кол-во в базовой ед.» фасовок">
+            <Select options={UNITS.map((u) => ({ value: u, label: u }))} />
+          </Form.Item>
+        </Col>
         <Col xs={24} sm={12} md={6}>
           <Form.Item label="Категория" name="categoryId" rules={[{ required: true, message: "Выберите категорию" }]}>
             <TreeSelect treeData={categoryTreeData(result.data)} treeDefaultExpandAll showSearch treeNodeFilterProp="title" />
@@ -270,8 +274,8 @@ const ProductForm = ({
             <Checkbox>Скоропортящийся</Checkbox>
           </Form.Item>
           {isPerishable ? (
-            <Form.Item label="Срок годности" name="shelfLife" rules={[{ required: true, whitespace: true, message: "Например, «7 суток»" }]}>
-              <Input placeholder="7 суток" />
+            <Form.Item label="Срок годности, дней" name="shelfLifeDays" rules={[{ required: true, message: "Укажите срок" }]}>
+              <InputNumber min={1} precision={0} style={{ width: "100%" }} />
             </Form.Item>
           ) : null}
         </Col>
@@ -293,7 +297,7 @@ const ProductForm = ({
   );
 };
 
-const toProduct = (v: Values, id: string): Omit<Product, "id"> => ({
+const toProduct = (v: Values): Values => ({
   ...v,
   name: v.name.trim(),
   sku: v.sku.trim(),
@@ -304,81 +308,34 @@ const toProduct = (v: Values, id: string): Omit<Product, "id"> => ({
   isWeighed: !!v.isWeighed,
   weightStep: v.isWeighed ? (v.weightStep ?? null) : null,
   isPerishable: !!v.isPerishable,
-  shelfLife: v.isPerishable ? (v.shelfLife?.trim() ?? null) : null,
+  shelfLifeDays: v.isPerishable ? (v.shelfLifeDays ?? null) : null,
   preorderAllowed: !!v.preorderAllowed,
   hidden: !!v.hidden,
-  packs: normalizePacks(v.packs, id),
+  packs: normalizePacks(v.packs),
 });
 
-/** Unique sku/barcode check against the loaded catalog. */
-const useDuplicateCheck = (selfId?: string) => {
-  const { result } = useList<Product>({ resource: "products", pagination: { mode: "off" } });
-  return (v: Values, form: FormInstance<Values>) => {
-    const others = result.data.filter((p) => p.id !== selfId);
-    const errs: Parameters<typeof form.setFields>[0] = [];
-    if (others.some((p) => p.sku === v.sku.trim())) errs.push({ name: "sku", errors: ["Такой артикул уже есть"] });
-    if (v.barcode && others.some((p) => p.barcode === v.barcode.trim()))
-      errs.push({ name: "barcode", errors: ["Такой штрихкод уже есть"] });
-    form.setFields(errs);
-    return errs.length === 0;
-  };
-};
-
+// Duplicate sku / barcode are rejected by the server (409) and shown as a notification.
 export const ProductCreate = () => {
-  const { mutateAsync: createStock } = useCreate<Stock>();
-  const { formProps, saveButtonProps, form, onFinish } = useForm<Product, HttpError, Values>({
-    action: "create",
-    onMutationSuccess: ({ data }) =>
-      // Every product has a stock row (id = productId) so A5 and the app stay consistent.
-      createStock({
-        resource: "stock",
-        values: { id: data.id, productId: data.id, productName: data.name, unit: stockUnit(data), quantity: 0, reserved: 0, lowThreshold: 5 },
-        successNotification: false,
-      }),
-  });
-  const unique = useDuplicateCheck();
+  const { formProps, saveButtonProps, form, onFinish } = useForm<Product, HttpError, Values>({ action: "create" });
   return (
     <Create saveButtonProps={{ ...saveButtonProps, children: "Сохранить" }} title="Новый товар">
       <ProductForm
         formProps={{
           ...formProps,
-          initialValues: { isWeighed: false, isPerishable: false, preorderAllowed: false, hidden: false, packs: [{ ...emptyPack }] },
+          initialValues: { baseUnit: "шт", isWeighed: false, isPerishable: false, preorderAllowed: false, hidden: false, packs: [{ ...emptyPack }] },
         }}
         form={form}
-        onSubmit={(v) => {
-          if (!unique(v, form)) return;
-          const id = newProductId();
-          onFinish({ id, ...toProduct(v, id) } as Values);
-        }}
+        onSubmit={(v) => onFinish(toProduct(v))}
       />
     </Create>
   );
 };
 
 export const ProductEdit = () => {
-  const { mutate: updateStock } = useUpdate<Stock>();
-  const { formProps, saveButtonProps, form, onFinish, id } = useForm<Product, HttpError, Values>({
-    action: "edit",
-    onMutationSuccess: ({ data }) =>
-      updateStock({
-        resource: "stock",
-        id: data.id,
-        values: { productName: data.name, unit: stockUnit(data) },
-        successNotification: false,
-        errorNotification: false,
-      }),
-  });
-  const unique = useDuplicateCheck(id ? String(id) : undefined);
+  const { formProps, saveButtonProps, form, onFinish } = useForm<Product, HttpError, Values>({ action: "edit" });
   return (
     <Edit saveButtonProps={{ ...saveButtonProps, children: "Сохранить" }} title="Изменить товар">
-      <ProductForm
-        formProps={formProps}
-        form={form}
-        onSubmit={(v) => {
-          if (!unique(v, form)) return;
-          onFinish(toProduct(v, String(id)) as Values);
-        }}
-      />
+      <ProductForm formProps={formProps} form={form} onSubmit={(v) => onFinish(toProduct(v))} />
     </Edit>
   );
 };

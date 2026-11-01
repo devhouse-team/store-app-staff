@@ -1,6 +1,6 @@
-// Staff-side domain types. Enum values are the backend codes (TASKS.md B6–B17,
-// mobile/app/lib/shared/domain/enums.dart). Keep in step with the OpenAPI contract (B2).
-// Money = integer tenge. Quantities = number (kg can be fractional).
+// Staff-side view types. providers/data.ts maps the backend contract (backend/openapi.json,
+// /api/v1/admin/*) onto these: ids become strings, decimal strings become numbers.
+// Enum values are the backend codes except ConditionType (mapped in providers/data.ts).
 
 export type CustomerMode = "retail" | "wholesale";
 export type PackVisibility = "retail" | "wholesale" | "both";
@@ -32,10 +32,11 @@ export interface Category {
   parentId: string | null; // up to 3 levels
 }
 
+export type Unit = "шт" | "кг" | "л";
+
 export interface Pack {
   id: string;
   label: string; // '10 кг'
-  unit: "шт" | "кг" | "л";
   baseQty: number; // amount of base unit in one pack
   retailPrice: number | null;
   wholesalePrice: number | null;
@@ -52,11 +53,13 @@ export interface Product {
   brand: string | null;
   categoryId: string;
   imageUrl: string | null;
+  imageKeys: string[]; // storage keys of uploaded photos (for DELETE)
   description: string | null;
+  baseUnit: Unit;
   isWeighed: boolean;
   weightStep: number | null;
   isPerishable: boolean;
-  shelfLife: string | null;
+  shelfLifeDays: number | null;
   preorderAllowed: boolean;
   hidden: boolean;
   packs: Pack[];
@@ -75,10 +78,10 @@ export interface Stock {
 export interface StockMovement {
   id: string;
   productId: string;
-  productName: string;
   delta: number;
-  reason: string; // 'Корректировка: пересорт', 'Заказ №1042'
-  staff: string;
+  reason: string; // label + comment, e.g. 'Корректировка: пересорт'
+  orderId: string | null;
+  staffId: string | null;
   createdAt: string;
 }
 
@@ -91,7 +94,6 @@ export interface Customer {
   wholesaleStatus: WholesaleStatus | null;
   orgName: string | null;
   bin: string | null;
-  settlement: string;
   ordersCount: number;
   isNew: boolean;
   blocked: boolean;
@@ -144,11 +146,11 @@ export interface Courier {
 
 export interface Order {
   id: string;
-  number: number;
+  number: string;
   customerId: string;
   customerName: string;
   customerPhone: string;
-  isNewCustomer: boolean;
+  isNewCustomer?: boolean; // only known as a list filter (new_customer)
   mode: CustomerMode;
   status: OrderStatus;
   createdAt: string;
@@ -158,17 +160,19 @@ export interface Order {
   deliveryFee: number;
   total: number;
   approximate: boolean;
-  totalBeforeWeighing: number | null;
   paymentMethod: PaymentMethod;
   paymentStatus: PaymentStatus;
   fulfilment: Fulfilment;
   address: string | null;
   slot: string | null;
   courierId: string | null;
+  paymentId: string | null;
   expectedDate: string | null; // preorder
   cancelReason: string | null;
   comment: string | null;
   invoiceId: string | null;
+  invoiceNumber: string | null;
+  invoiceUrl: string | null;
 }
 
 export interface Condition {
@@ -184,45 +188,47 @@ export interface Condition {
   startsAt: string | null;
   endsAt: string | null;
   enabled: boolean;
+  priority?: number; // backend-only, carried through edits
+  targets?: unknown[]; // full backend target list, carried through edits
 }
 
 export interface DeliveryZone {
   id: string;
-  settlement: string;
+  name: string;
+  localities: string[];
   fee: number;
   freeFrom: number | null;
-  minOrderRetail: number;
-  minOrderWholesale: number;
+  minOrder: number | null;
   active: boolean;
 }
 
 export interface DeliverySlot {
   id: string;
-  days: number[]; // 1 = Mon … 7 = Sun
+  weekday: number; // 0 = Mon … 6 = Sun (Python weekday())
   from: string; // '14:00'
   to: string;
-  limit: number;
+  limit: number | null;
   active: boolean;
 }
 
 export interface Invoice {
   id: string;
-  number: string; // 'Н-000123'
+  number: string;
   orderId: string;
-  orderNumber: number;
-  customerName: string;
-  bin: string | null;
   total: number;
   vat: number;
-  createdAt: string;
+  vatRate: number;
+  createdAt: string | null;
+  url: string | null; // signed PDF link, only on detail / generate responses
 }
 
 export interface AuditEntry {
   id: string;
   staff: string;
-  resource: string;
+  staffId: string | null;
+  resource: string; // backend entity: order, product, pack, …
   recordId: string;
-  action: "create" | "update" | "delete";
+  action: string; // create, update, delete, status_change, …
   before: unknown;
   after: unknown;
   createdAt: string;
@@ -230,33 +236,34 @@ export interface AuditEntry {
 
 export interface ImportJob {
   id: string;
-  fileName: string;
+  fileName: string | null;
   dryRun: boolean;
-  status: "ok" | "errors" | "applied";
+  status: "pending" | "running" | "completed" | "failed";
   rows: number;
-  created: number;
-  updated: number;
-  errors: { row: number; field: string; message: string }[];
-  staff: string;
+  okRows: number;
+  errorRows: number;
+  summary: Record<string, unknown>;
   createdAt: string;
+  errors: { row: number | null; level: string; message: string }[]; // detail only
 }
 
-/** Singleton settings record, id = 'main'. */
+/** Singleton shop settings (GET/PUT /admin/settings), id = 'main'. */
 export interface Settings {
   id: "main";
-  legalName: string;
-  bin: string;
-  legalAddress: string;
-  bank: string;
-  iban: string;
-  vatRate: number; // percent
-  transferRecipient: string;
-  kaspiPhone: string;
-  card: string;
-  onlinePaymentEnabled: boolean;
-  pickupAddress: string;
-  pickupHours: string;
-  supportPhone: string;
-  supportWhatsapp: string;
-  telegramGroup: string;
+  legalName: string | null;
+  bin: string | null;
+  legalAddress: string | null;
+  bank: string | null;
+  iban: string | null;
+  bik: string | null;
+  kbe: string | null;
+  vatRate: number | null; // percent
+  transferRecipient: string | null;
+  kaspiPhone: string | null;
+  card: string | null;
+  pickupAddress: string | null;
+  pickupHours: string | null;
+  supportPhone: string | null;
+  supportEmail: string | null;
+  supportTelegram: string | null;
 }

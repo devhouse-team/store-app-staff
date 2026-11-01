@@ -1,12 +1,16 @@
 import { List, useTable } from "@refinedev/antd";
-import { useCreate, useGetIdentity, useList, useUpdate } from "@refinedev/core";
+import { useList, useUpdate } from "@refinedev/core";
 import { CheckCircleOutlined, CloseCircleOutlined, EditOutlined, WarningOutlined } from "@ant-design/icons";
 import { Button, Checkbox, Form, Input, InputNumber, Modal, Radio, Select, Space, Table, Tabs, Tag, Tooltip, Typography } from "antd";
 import { useMemo, useState } from "react";
 import type { Stock, StockMovement } from "../../types";
+import { Link } from "react-router";
 import { dateTime, qty } from "../../lib/format";
 
-const REASONS = ["Поставка", "Пересорт", "Бой/порча", "Инвентаризация", "Другое"];
+// Label → backend AdjustIn.reason; the label is kept in the movement comment.
+const REASONS: Record<string, "receipt" | "adjustment" | "write_off"> = {
+  Поставка: "receipt", Пересорт: "adjustment", "Бой/порча": "write_off", Инвентаризация: "adjustment", Другое: "adjustment",
+};
 const num: React.CSSProperties = { fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" };
 
 const available = (s: Stock) => s.quantity - s.reserved;
@@ -21,9 +25,7 @@ type AdjustValues = { mode: "delta" | "set"; value: number; reason: string; comm
 
 const AdjustModal = ({ record, onClose }: { record: Stock; onClose: () => void }) => {
   const [form] = Form.useForm<AdjustValues>();
-  const { data: me } = useGetIdentity<{ name: string }>();
   const { mutateAsync: update, mutation } = useUpdate<Stock>();
-  const { mutateAsync: create } = useCreate<StockMovement>();
   const mode = Form.useWatch("mode", form);
   const value = Form.useWatch("value", form);
   const reason = Form.useWatch("reason", form);
@@ -35,18 +37,12 @@ const AdjustModal = ({ record, onClose }: { record: Stock; onClose: () => void }
     const quantity = round(v.mode === "set" ? v.value : record.quantity + v.value);
     const delta = round(quantity - record.quantity);
     if (!delta) return onClose();
-    await update({ resource: "stock", id: record.id, values: { quantity }, successNotification: { type: "success", message: "Остаток обновлён" } });
-    await create({
-      resource: "stock_movements",
-      values: {
-        productId: record.productId,
-        productName: record.productName,
-        delta,
-        reason: v.comment?.trim() ? `${v.reason}: ${v.comment.trim()}` : v.reason,
-        staff: me?.name ?? "—",
-        createdAt: new Date().toISOString(),
-      },
-      successNotification: false,
+    // One server call: stock change + movement record (POST /admin/stock/{id}/adjust).
+    await update({
+      resource: "stock",
+      id: record.id,
+      values: { delta, reason: REASONS[v.reason], comment: v.comment?.trim() ? `${v.reason}: ${v.comment.trim()}` : v.reason },
+      successNotification: { type: "success", message: "Остаток обновлён" },
     });
     onClose();
   };
@@ -94,7 +90,7 @@ const AdjustModal = ({ record, onClose }: { record: Stock; onClose: () => void }
           <InputNumber step={step} style={{ width: "100%" }} placeholder={mode === "set" ? "0" : "+10 или −2"} />
         </Form.Item>
         <Form.Item label="Причина" name="reason" rules={[{ required: true, message: "Выберите причину" }]}>
-          <Select options={REASONS.map((r) => ({ value: r, label: r }))} />
+          <Select options={Object.keys(REASONS).map((r) => ({ value: r, label: r }))} />
         </Form.Item>
         <Form.Item
           label="Комментарий"
@@ -197,11 +193,11 @@ const StockTable = () => {
 
 const MovementsTable = () => {
   const { result: stock } = useList<Stock>({ resource: "stock", pagination: { mode: "off" } });
+  const productName = new Map(stock.data.map((s) => [s.productId, s.productName]));
   const { tableProps, setFilters } = useTable<StockMovement>({
     resource: "stock_movements",
     syncWithLocation: false,
     pagination: { pageSize: 20 },
-    sorters: { initial: [{ field: "createdAt", order: "desc" }] },
   });
   return (
     <>
@@ -222,8 +218,8 @@ const MovementsTable = () => {
         scroll={{ x: true }}
         locale={{ emptyText: "Движений нет" }}
         columns={[
-          { title: "Дата", dataIndex: "createdAt", render: dateTime, sorter: true },
-          { title: "Товар", dataIndex: "productName" },
+          { title: "Дата", dataIndex: "createdAt", render: dateTime },
+          { title: "Товар", dataIndex: "productId", render: (id: string) => productName.get(id) ?? `#${id}` },
           {
             title: "Изменение",
             dataIndex: "delta",
@@ -234,8 +230,11 @@ const MovementsTable = () => {
               </Typography.Text>
             ),
           },
-          { title: "Причина", dataIndex: "reason" },
-          { title: "Сотрудник", dataIndex: "staff" },
+          {
+            title: "Причина",
+            dataIndex: "reason",
+            render: (r: string, m: StockMovement) => (m.orderId ? <>{r} · <Link to={`/orders/${m.orderId}`}>заказ</Link></> : r),
+          },
         ]}
       />
     </>

@@ -1,18 +1,18 @@
-import { DeleteOutlined, PrinterOutlined, SwapOutlined } from "@ant-design/icons";
+import { DeleteOutlined, FilePdfOutlined, PrinterOutlined, SwapOutlined } from "@ant-design/icons";
 import { Show, useSelect } from "@refinedev/antd";
-import { useCreate, useList, useNotification, useOne, useShow, useUpdate, useWarnAboutChange } from "@refinedev/core";
+import { useCreate, useCustom, useList, useNotification, useOne, useShow, useUpdate, useWarnAboutChange } from "@refinedev/core";
 import {
   Alert, Button, Card, Checkbox, Col, DatePicker, Descriptions, Input, InputNumber, Modal, Popconfirm, Row, Select, Space,
-  Table, Tag, Tooltip, Typography,
+  Spin, Table, Tag, Tooltip, Typography,
 } from "antd";
 import dayjs from "dayjs";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { MODE, ORDER_NEXT, ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS, date, dateTime, qty, tenge } from "../../lib/format";
-import type { Customer, Invoice, Order, OrderItem, OrderStatus, Product, Settings } from "../../types";
-import { InvoicePrint } from "../invoices/InvoicePrint";
+import { formatAddress } from "../../providers/data";
+import type { Invoice, Order, OrderItem, OrderStatus, Product, Settings } from "../../types";
+import { useOpenInvoice } from "../invoices";
 import { PrintModal } from "./PrintModal";
-import { recalc } from "./recalc";
 
 const EDITABLE: OrderStatus[] = ["new", "preorder", "confirmed", "assembling"];
 const INVOICE_READY: OrderStatus[] = ["in_delivery", "ready_for_pickup", "completed"];
@@ -41,16 +41,14 @@ export const OrderShow = () => {
   const [cancelReason, setCancelReason] = useState("");
   const [replacing, setReplacing] = useState<OrderItem | null>(null);
   const [replaceWith, setReplaceWith] = useState<string>();
-  const [print, setPrint] = useState<"sheet" | "invoice" | null>(null);
+  const [print, setPrint] = useState(false);
+  const { openPdf, busy: invoiceBusy } = useOpenInvoice();
 
   useEffect(() => setWarnWhen(!!draft), [draft, setWarnWhen]);
   useEffect(() => setExpectedDate(order?.expectedDate ?? null), [order?.expectedDate]);
 
   const { result: products } = useList<Product>({ resource: "products", pagination: { mode: "off" } });
   const { result: settings } = useOne<Settings>({ resource: "settings", id: "main" });
-  const { result: customer } = useOne<Customer>({ resource: "customers", id: order?.customerId ?? "", queryOptions: { enabled: !!order } });
-  const { result: invoices } = useList<Invoice>({ resource: "invoices", pagination: { mode: "off" } });
-  const { result: invoice } = useOne<Invoice>({ resource: "invoices", id: order?.invoiceId ?? "", queryOptions: { enabled: !!order?.invoiceId } });
   const { selectProps: courierSelect } = useSelect({
     resource: "couriers",
     optionLabel: "name",
@@ -75,7 +73,11 @@ export const OrderShow = () => {
 
   const items = draft ?? order.items;
   const editable = EDITABLE.includes(order.status);
-  const totals = recalc(order, items);
+  // Prices and totals come only from the server; edited lines show "—" until saved.
+  const changed = (i: OrderItem) => {
+    const o = order.items.find((x) => x.id === i.id);
+    return !o || o.packId !== i.packId || o.qty !== i.qty || o.actualQty !== i.actualQty;
+  };
   const anyPreorder = items.some((i) => i.preorder);
   const next = ORDER_NEXT[order.status].filter(
     (s) => !(s === "in_delivery" && order.fulfilment === "pickup") && !(s === "ready_for_pickup" && order.fulfilment === "delivery"),
@@ -95,10 +97,19 @@ export const OrderShow = () => {
       open?.({ type: "error", message: "Укажите ожидаемую дату для предзаказа" });
       return;
     }
+    // ItemsEditIn: only changed lines; dropped lines are sent with remove: true.
+    const edits = order.items.flatMap((o) => {
+      const d = items.find((x) => x.id === o.id);
+      if (!d) return [{ id: Number(o.id), remove: true }];
+      const e: Record<string, number | null> = {};
+      if (d.packId !== o.packId) e.pack_id = Number(d.packId);
+      if (d.qty !== o.qty) e.quantity = d.qty;
+      if (d.actualQty !== o.actualQty) e.actual_weight = d.actualQty;
+      return Object.keys(e).length ? [{ id: Number(o.id), ...e }] : [];
+    });
     await save({
-      ...totals,
-      expectedDate: anyPreorder ? expectedDate : null,
-      ...(anyPreorder && order.status === "new" ? { status: "preorder" as const } : {}),
+      ...(edits.length ? { items: edits as never } : {}),
+      ...(anyPreorder && expectedDate !== order.expectedDate ? { expectedDate } : {}),
     });
     setDraft(null);
   };
@@ -108,10 +119,7 @@ export const OrderShow = () => {
     const p = products?.data.find((x) => x.id === pid);
     const k = p?.packs.find((x) => x.id === kid);
     if (!replacing || !p || !k) return;
-    patchItem(replacing.id, {
-      productId: p.id, packId: k.id, name: p.name, packLabel: k.label, unit: k.unit, actualQty: null, approximate: p.isWeighed,
-      unitPrice: (order.mode === "wholesale" ? k.wholesalePrice : k.retailPrice) ?? 0,
-    });
+    patchItem(replacing.id, { productId: p.id, packId: k.id, name: p.name, packLabel: k.label, actualQty: null, approximate: p.isWeighed });
     setReplacing(null);
     setReplaceWith(undefined);
   };
@@ -123,24 +131,11 @@ export const OrderShow = () => {
     setCancelReason("");
   };
 
+  // Number, VAT and the PDF are produced by the server (POST /admin/invoices/orders/{id}).
   const createInvoice = async () => {
-    const vatRate = settings?.vatRate ?? 12;
-    const max = Math.max(0, ...(invoices?.data ?? []).map((i) => Number(i.number.replace(/\D/g, "")) || 0));
-    const { data } = await create({
-      resource: "invoices",
-      successNotification: false,
-      values: {
-        number: `Н-${String(max + 1).padStart(6, "0")}`,
-        orderId: order.id,
-        orderNumber: order.number,
-        customerName: customer?.orgName ?? order.customerName,
-        bin: customer?.bin ?? null,
-        total: order.total,
-        vat: Math.round((order.total * vatRate) / (100 + vatRate)),
-        createdAt: new Date().toISOString(),
-      },
-    });
-    await save({ invoiceId: String(data.id) }, `Накладная ${data.number} сформирована`);
+    const { data } = await create({ resource: "invoices", values: { orderId: order.id }, successNotification: false });
+    open?.({ type: "success", message: `Накладная ${data.number} сформирована` });
+    await query.refetch();
   };
 
   const statusTag = (s: OrderStatus) => <Tag color={ORDER_STATUS[s].color}>{ORDER_STATUS[s].label}</Tag>;
@@ -155,7 +150,7 @@ export const OrderShow = () => {
         </Space>
       }
       canEdit={false}
-      headerButtons={<Button icon={<PrinterOutlined />} onClick={() => setPrint("sheet")}>Печать сборочного листа</Button>}
+      headerButtons={<Button icon={<PrinterOutlined />} onClick={() => setPrint(true)}>Печать сборочного листа</Button>}
     >
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={16}>
@@ -236,21 +231,15 @@ export const OrderShow = () => {
                     ) : i.actualQty != null ? qty(i.actualQty, i.unit) : "—"
                   }
                 />
-                <Table.Column<OrderItem> title="Цена" align="right" render={(_, i) => tenge(i.unitPrice)} />
+                <Table.Column<OrderItem> title="Цена" align="right" render={(_, i) => (changed(i) ? "—" : tenge(i.unitPrice))} />
                 <Table.Column<OrderItem>
                   title="Сумма"
                   align="right"
-                  render={(_, i) => {
-                    const line = totals.items!.find((x) => x.id === i.id)!;
-                    return tenge(line.lineTotal, i.approximate && i.actualQty == null);
-                  }}
+                  render={(_, i) => (changed(i) ? "—" : tenge(i.lineTotal, i.approximate && i.actualQty == null))}
                 />
                 <Table.Column<OrderItem>
                   title="Предзаказ"
-                  render={(_, i) => (
-                    <Checkbox checked={i.preorder} disabled={!editable} aria-label={`Предзаказ: ${i.name}`}
-                      onChange={(e) => patchItem(i.id, { preorder: e.target.checked })} />
-                  )}
+                  render={(_, i) => <Checkbox checked={i.preorder} disabled aria-label={`Предзаказ: ${i.name}`} />}
                 />
                 {editable && (
                   <Table.Column<OrderItem>
@@ -287,14 +276,12 @@ export const OrderShow = () => {
                 </Space>
               )}
               <Descriptions size="small" column={1} style={{ marginTop: 12, maxWidth: 360, marginLeft: "auto" }} className="num">
-                <Descriptions.Item label="Товары">{tenge(totals.subtotal)}</Descriptions.Item>
+                <Descriptions.Item label="Товары">{tenge(order.subtotal)}</Descriptions.Item>
                 {!!order.discount && <Descriptions.Item label="Скидка">−{tenge(order.discount)}</Descriptions.Item>}
                 <Descriptions.Item label="Доставка">{tenge(order.deliveryFee)}</Descriptions.Item>
-                <Descriptions.Item label="Итого"><b>{tenge(totals.total, totals.approximate)}</b></Descriptions.Item>
-                {totals.totalBeforeWeighing != null && (
-                  <Descriptions.Item label="До взвешивания">{tenge(totals.totalBeforeWeighing)}</Descriptions.Item>
-                )}
+                <Descriptions.Item label="Итого"><b>{tenge(order.total, order.approximate)}</b></Descriptions.Item>
               </Descriptions>
+              {draft && <Typography.Text type="secondary" style={{ display: "block", textAlign: "right" }}>Итоги пересчитает сервер после сохранения.</Typography.Text>}
             </Card>
           </Space>
         </Col>
@@ -309,12 +296,14 @@ export const OrderShow = () => {
                     {order.isNewCustomer && <Tag color="blue">новый клиент</Tag>}
                   </Space>
                 </Descriptions.Item>
-                <Descriptions.Item label="Телефон"><a href={`tel:${order.customerPhone.replace(/\s/g, "")}`}>{order.customerPhone}</a></Descriptions.Item>
+                <Descriptions.Item label="Телефон">
+                  {order.customerPhone ? <a href={`tel:${order.customerPhone.replace(/\s/g, "")}`}>{order.customerPhone}</a> : "—"}
+                </Descriptions.Item>
                 <Descriptions.Item label="Создан">{dateTime(order.createdAt)}</Descriptions.Item>
                 {order.fulfilment === "delivery" ? (
                   <>
                     <Descriptions.Item label="Доставка">{order.address ?? "—"}</Descriptions.Item>
-                    <Descriptions.Item label="Слот">{order.slot ?? "—"}</Descriptions.Item>
+                    <Descriptions.Item label="Дата доставки">{order.slot ?? "—"}</Descriptions.Item>
                   </>
                 ) : (
                   <Descriptions.Item label="Самовывоз">{settings ? `${settings.pickupAddress}, ${settings.pickupHours}` : "—"}</Descriptions.Item>
@@ -365,8 +354,8 @@ export const OrderShow = () => {
               <Card size="small" title="Накладная">
                 {order.invoiceId ? (
                   <Space wrap>
-                    <span>{invoice?.number ?? "…"}</span>
-                    <Button size="small" icon={<PrinterOutlined />} disabled={!invoice} onClick={() => setPrint("invoice")}>Печать</Button>
+                    <span>{order.invoiceNumber}</span>
+                    <Button size="small" icon={<FilePdfOutlined />} loading={invoiceBusy === order.invoiceId} onClick={() => openPdf(order.invoiceId!)}>Открыть PDF</Button>
                     <Link to="/invoices">Все накладные</Link>
                   </Space>
                 ) : INVOICE_READY.includes(order.status) ? (
@@ -405,11 +394,8 @@ export const OrderShow = () => {
         </Typography.Text>
       </Modal>
 
-      <PrintModal open={print === "sheet"} title="Сборочный лист" onClose={() => setPrint(null)}>
-        <AssemblySheet order={order} pickup={settings?.pickupAddress} />
-      </PrintModal>
-      <PrintModal open={print === "invoice"} title={`Накладная ${invoice?.number ?? ""}`} onClose={() => setPrint(null)}>
-        {invoice && <InvoicePrint invoice={invoice} />}
+      <PrintModal open={print} title="Сборочный лист" onClose={() => setPrint(false)}>
+        <AssemblySheet orderId={order.id} pickup={settings?.pickupAddress} />
       </PrintModal>
     </Show>
   );
@@ -417,52 +403,65 @@ export const OrderShow = () => {
 
 const td: React.CSSProperties = { border: "1px solid currentColor", padding: "6px 8px", textAlign: "left" };
 
-const AssemblySheet = ({ order, pickup }: { order: Order; pickup?: string }) => (
-  <div className="num" style={{ fontSize: 13 }}>
-    <h2 style={{ margin: "0 0 8px" }}>Сборочный лист · заказ № {order.number}</h2>
-    <p style={{ margin: "0 0 12px" }}>
-      <b>Клиент:</b> {order.customerName}, {order.customerPhone}
-      <br />
-      {order.fulfilment === "delivery" ? (
-        <>
-          <b>Адрес:</b> {order.address ?? "—"} · <b>Слот:</b> {order.slot ?? "—"}
-        </>
-      ) : (
-        <>
-          <b>Самовывоз:</b> {pickup ?? "—"}
-        </>
-      )}
-      {order.comment && (
-        <>
-          <br />
-          <b>Комментарий:</b> {order.comment}
-        </>
-      )}
-    </p>
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead>
-        <tr>
-          <th style={td}>✓</th>
-          <th style={td}>Товар</th>
-          <th style={td}>Фасовка</th>
-          <th style={{ ...td, textAlign: "right" }}>Кол-во</th>
-          <th style={td}>Факт. вес</th>
-        </tr>
-      </thead>
-      <tbody>
-        {order.items.map((i) => (
-          <tr key={i.id}>
-            <td style={{ ...td, width: 32 }}>☐</td>
-            <td style={td}>
-              {i.name}
-              {i.preorder && " (предзаказ)"}
-            </td>
-            <td style={td}>{i.packLabel}</td>
-            <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{qty(i.qty, i.unit)}</td>
-            <td style={{ ...td, width: 100 }}>{i.approximate ? (i.actualQty != null ? qty(i.actualQty, i.unit) : "") : "—"}</td>
+type PickingList = {
+  number: string; customer_name: string; contact_phone: string | null; delivery_type: "delivery" | "pickup";
+  delivery_address: Record<string, string> | null; delivery_date: string | null; comment: string | null;
+  items: { sku: string | null; name: string; pack_name: string; quantity: string; estimated: boolean; actual_weight: string | null }[];
+};
+
+/** GET /admin/orders/{id}/picking-list rendered for print. */
+const AssemblySheet = ({ orderId, pickup }: { orderId: string; pickup?: string | null }) => {
+  const { result, query } = useCustom<PickingList>({ url: `/admin/orders/${orderId}/picking-list`, method: "get" });
+  const p = result?.data;
+  if (query.isLoading) return <Spin />;
+  if (!p) return <Alert type="error" message="Не удалось загрузить сборочный лист" />;
+  return (
+    <div className="num" style={{ fontSize: 13 }}>
+      <h2 style={{ margin: "0 0 8px" }}>Сборочный лист · заказ № {p.number}</h2>
+      <p style={{ margin: "0 0 12px" }}>
+        <b>Клиент:</b> {p.customer_name}{p.contact_phone ? `, ${p.contact_phone}` : ""}
+        <br />
+        {p.delivery_type === "delivery" ? (
+          <>
+            <b>Адрес:</b> {formatAddress(p.delivery_address) ?? "—"} · <b>Дата:</b> {date(p.delivery_date)}
+          </>
+        ) : (
+          <>
+            <b>Самовывоз:</b> {pickup ?? "—"}
+          </>
+        )}
+        {p.comment && (
+          <>
+            <br />
+            <b>Комментарий:</b> {p.comment}
+          </>
+        )}
+      </p>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead>
+          <tr>
+            <th style={td}>✓</th>
+            <th style={td}>Товар</th>
+            <th style={td}>Фасовка</th>
+            <th style={{ ...td, textAlign: "right" }}>Кол-во</th>
+            <th style={td}>Факт. вес</th>
           </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-);
+        </thead>
+        <tbody>
+          {p.items.map((i, n) => (
+            <tr key={n}>
+              <td style={{ ...td, width: 32 }}>☐</td>
+              <td style={td}>
+                {i.name}
+                {i.sku && <small> · {i.sku}</small>}
+              </td>
+              <td style={td}>{i.pack_name}</td>
+              <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>{Number(i.quantity)}</td>
+              <td style={{ ...td, width: 100 }}>{i.estimated ? (i.actual_weight != null ? qty(Number(i.actual_weight), "кг") : "") : "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};

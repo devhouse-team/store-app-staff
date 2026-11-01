@@ -51,12 +51,11 @@ export const CustomerList = () => {
         )} />
         <Table.Column dataIndex="phone" title="Телефон" render={(v) => <span style={{ whiteSpace: "nowrap" }}>{v}</span>} />
         <Table.Column dataIndex="email" title="Email" render={(v) => v ?? "—"} />
-        <Table.Column dataIndex="settlement" title="Населённый пункт" />
         <Table.Column<Customer> dataIndex="mode" title="Режим" render={(v: Customer["mode"]) => <Tag color={MODE[v].color}>{MODE[v].label}</Tag>} />
         <Table.Column<Customer> dataIndex="wholesaleStatus" title="Заявка на опт" render={(v: Customer["wholesaleStatus"]) =>
           v ? <Tag color={WHOLESALE_STATUS[v].color}>{WHOLESALE_STATUS[v].label}</Tag> : "—"} />
-        <Table.Column dataIndex="ordersCount" title="Заказов" align="right" sorter />
-        <Table.Column dataIndex="createdAt" title="Регистрация" sorter render={date} />
+        <Table.Column dataIndex="ordersCount" title="Заказов" align="right" />
+        <Table.Column dataIndex="createdAt" title="Регистрация" render={date} />
       </Table>
     </List>
   );
@@ -108,9 +107,8 @@ export const CustomerShow = () => {
         <Space direction="vertical" size="middle" style={{ width: "100%" }}>
           <Card size="small" title={<Space wrap>Профиль <CustomerTags c={c} /></Space>}>
             <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }}>
-              <Descriptions.Item label="Телефон">{c.phone}</Descriptions.Item>
+              <Descriptions.Item label="Телефон">{c.phone || "—"}</Descriptions.Item>
               <Descriptions.Item label="Email">{c.email ?? "—"}</Descriptions.Item>
-              <Descriptions.Item label="Населённый пункт">{c.settlement}</Descriptions.Item>
               <Descriptions.Item label="Режим"><Tag color={MODE[c.mode].color}>{MODE[c.mode].label}</Tag></Descriptions.Item>
               <Descriptions.Item label="Заявка на опт">
                 {c.wholesaleStatus ? <Tag color={WHOLESALE_STATUS[c.wholesaleStatus].color}>{WHOLESALE_STATUS[c.wholesaleStatus].label}</Tag> : "—"}

@@ -1,11 +1,11 @@
 import { DeleteButton, EditButton, List, useTable } from "@refinedev/antd";
-import { useDelete, useList, useUpdateMany, type CrudFilter } from "@refinedev/core";
+import { useList, useUpdateMany, type CrudFilter } from "@refinedev/core";
 import { EyeInvisibleOutlined, EyeOutlined, FolderOutlined } from "@ant-design/icons";
 import { Button, Form, Input, Modal, Select, Space, Table, Tag, Tooltip, TreeSelect, Typography } from "antd";
 import { useState } from "react";
 import type { Category, Product } from "../../types";
 import { tenge } from "../../lib/format";
-import { catPath, categoryTreeData, descendantIds } from "../categories/tree";
+import { catPath, categoryTreeData } from "../categories/tree";
 import { VISIBILITY } from "./packs";
 
 type Hidden = "all" | "visible" | "hidden";
@@ -21,7 +21,6 @@ export const ProductList = () => {
   const [moveOpen, setMoveOpen] = useState(false);
   const [moveTo, setMoveTo] = useState<string>();
   const { mutate: updateMany, mutation: bulk } = useUpdateMany<Product>();
-  const { mutate: deleteOne } = useDelete();
 
   const apply = (next: { q?: string; categoryId?: string | null; hidden?: Hidden }) => {
     const s = { q, categoryId, hidden, ...next };
@@ -31,7 +30,7 @@ export const ProductList = () => {
         operator: "or",
         value: ["name", "sku", "barcode"].map((field) => ({ field, operator: "contains" as const, value: s.q!.trim() })),
       });
-    if (s.categoryId) f.push({ field: "categoryId", operator: "in", value: descendantIds(cats, s.categoryId) });
+    if (s.categoryId) f.push({ field: "categoryId", operator: "eq", value: s.categoryId }); // server includes subcategories
     if (s.hidden !== "all") f.push({ field: "hidden", operator: "eq", value: s.hidden === "hidden" });
     setFilters(f, "replace");
   };
@@ -106,7 +105,6 @@ export const ProductList = () => {
           {
             title: "Товар",
             dataIndex: "name",
-            sorter: true,
             render: (name, p) => (
               <Space direction="vertical" size={0}>
                 <Typography.Text strong>{name}</Typography.Text>
@@ -170,9 +168,6 @@ export const ProductList = () => {
                     confirmTitle={`Удалить «${p.name}»?`}
                     confirmOkText="Удалить"
                     confirmCancelText="Отмена"
-                    onSuccess={() =>
-                      deleteOne({ resource: "stock", id: p.id, successNotification: false, errorNotification: false })
-                    }
                   />
                 </Tooltip>
               </Space>

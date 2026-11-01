@@ -3,7 +3,8 @@ import { useUpdate } from "@refinedev/core";
 import { Button, Form, Input, Modal, Space, Switch, Table } from "antd";
 import type { Courier } from "../../types";
 
-export const PHONE_RULE = { pattern: /^\+7 \d{3} \d{3} \d{2} \d{2}$/, message: "Формат: +7 700 123 45 67" };
+// Backend stores phones as typed; accept "+77001234567" and "+7 700 123 45 67".
+export const PHONE_RULE = { pattern: /^\+7( ?\d){10}$/, message: "Формат: +7 700 123 45 67" };
 
 export const CourierList = () => {
   const { tableProps } = useTable<Courier>({ syncWithLocation: false, pagination: { mode: "off" } });

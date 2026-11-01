@@ -1,42 +1,32 @@
 import { useState } from "react";
 import { DownloadOutlined } from "@ant-design/icons";
 import { List, ShowButton, useTable } from "@refinedev/antd";
-import { useDataProvider, useNavigation, type CrudFilter } from "@refinedev/core";
-import { Button, Checkbox, DatePicker, Form, Grid, Input, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
+import { useNotification, useNavigation, type CrudFilter } from "@refinedev/core";
+import { Button, Checkbox, DatePicker, Form, Grid, Select, Space, Table, Tag, Tooltip, Typography } from "antd";
 import type { Dayjs } from "dayjs";
 import { useLocation } from "react-router";
 import { MODE, ORDER_STATUS, PAYMENT_METHOD, PAYMENT_STATUS, dateTime, options, tenge } from "../../lib/format";
+import { download } from "../../providers/api";
 import type { Order } from "../../types";
 
 type FilterValues = {
-  status?: string[];
+  status?: string;
   range?: [Dayjs, Dayjs] | null;
   mode?: string;
-  q?: string;
   newOnly?: boolean;
   paymentStatus?: string;
 };
 
+// The API filters by one status and has no text search over customers.
 const toFilters = (v: FilterValues): CrudFilter[] => [
-  { field: "status", operator: "in", value: v.status },
-  { field: "createdAt", operator: "gte", value: v.range?.[0]?.startOf("day").toISOString() },
-  { field: "createdAt", operator: "lte", value: v.range?.[1]?.endOf("day").toISOString() },
+  { field: "status", operator: "eq", value: v.status },
+  { field: "createdAt", operator: "gte", value: v.range?.[0]?.format("YYYY-MM-DD") },
+  { field: "createdAt", operator: "lte", value: v.range?.[1]?.format("YYYY-MM-DD") },
   { field: "mode", operator: "eq", value: v.mode },
   { field: "paymentStatus", operator: "eq", value: v.paymentStatus },
   { field: "isNewCustomer", operator: "eq", value: v.newOnly || undefined },
-  {
-    key: "q",
-    operator: "or",
-    value: v.q
-      ? [
-          { field: "customerName", operator: "contains", value: v.q },
-          { field: "customerPhone", operator: "contains", value: v.q },
-        ]
-      : [],
-  },
 ];
 
-const csvCell = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
 const FULFILMENT = { delivery: "Доставка", pickup: "Самовывоз" } as const;
 
 // Remount on ?status= change so the header counter link applies its filter even when /orders is already open.
@@ -45,38 +35,30 @@ export const OrderList = () => <OrderTable key={useLocation().search} />;
 const OrderTable = () => {
   // ?status=new deep link from the header attention counters.
   const initialStatus = new URLSearchParams(useLocation().search).get("status");
-  const { tableProps, filters, sorters, searchFormProps } = useTable<Order, never, FilterValues>({
+  const { tableProps, filters, searchFormProps } = useTable<Order, never, FilterValues>({
     syncWithLocation: false,
     sorters: { initial: [{ field: "createdAt", order: "desc" }] },
-    filters: { initial: initialStatus ? [{ field: "status", operator: "in", value: [initialStatus] }] : [] },
+    filters: { initial: initialStatus ? [{ field: "status", operator: "eq", value: initialStatus }] : [] },
     onSearch: toFilters,
   });
   const { show } = useNavigation();
   const wide = !!Grid.useBreakpoint().md;
   const [showFilters, setShowFilters] = useState(false);
-  const dataProvider = useDataProvider();
+  const { open } = useNotification();
 
-  const exportCsv = async () => {
-    const { data } = await dataProvider().getList<Order>({ resource: "orders", filters, sorters, pagination: { mode: "off" } });
-    const head = ["Номер", "Дата", "Клиент", "Телефон", "Режим", "Статус", "Способ оплаты", "Оплата", "Получение", "Сумма", "Приблизительно"];
-    const rows = data.map((o) => [
-      o.number, dateTime(o.createdAt), o.customerName, o.customerPhone, MODE[o.mode].label, ORDER_STATUS[o.status].label,
-      PAYMENT_METHOD[o.paymentMethod], PAYMENT_STATUS[o.paymentStatus].label, FULFILMENT[o.fulfilment], o.total, o.approximate ? "да" : "",
-    ]);
-    const csv = [head, ...rows].map((r) => r.map(csvCell).join(";")).join("\r\n");
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }));
-    a.download = `orders-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+  // Server-side CSV with the same filters as the table.
+  const exportCsv = () => {
+    const v = (field: string, op = "eq") =>
+      (filters.find((f) => "field" in f && f.field === field && f.operator === op)?.value as string | boolean | undefined) ?? undefined;
+    download("/admin/orders/export.csv", `orders-${new Date().toISOString().slice(0, 10)}.csv`, {
+      status: v("status"), date_from: v("createdAt", "gte"), date_to: v("createdAt", "lte"), mode: v("mode"),
+      payment_status: v("paymentStatus"), new_customer: v("isNewCustomer"),
+    }).catch((e) => open?.({ type: "error", message: "Не удалось выгрузить CSV", description: e.message }));
   };
 
   return (
     <List headerButtons={<Button icon={<DownloadOutlined />} onClick={exportCsv}>Экспорт CSV</Button>}>
-      <Form {...searchFormProps} initialValues={{ status: initialStatus ? [initialStatus] : undefined }} layout="inline" onValuesChange={() => searchFormProps.form?.submit()} style={{ rowGap: 8, marginBottom: 12 }}>
-        <Form.Item name="q">
-          <Input placeholder="Имя или телефон" aria-label="Поиск по имени или телефону" allowClear style={{ width: wide ? 200 : "100%" }} />
-        </Form.Item>
+      <Form {...searchFormProps} initialValues={{ status: initialStatus ?? undefined }} layout="inline" onValuesChange={() => searchFormProps.form?.submit()} style={{ rowGap: 8, marginBottom: 12 }}>
         {!wide && (
           <Button onClick={() => setShowFilters((v) => !v)} aria-expanded={showFilters}>
             {showFilters ? "Скрыть фильтры" : "Фильтры"}
@@ -85,7 +67,7 @@ const OrderTable = () => {
         {/* Phones: filters collapse behind one button so the list starts on the first screen. */}
         <div style={{ display: wide || showFilters ? "contents" : "none" }}>
           <Form.Item name="status">
-            <Select mode="multiple" allowClear placeholder="Статус" options={options(ORDER_STATUS)} style={{ minWidth: 180 }} maxTagCount="responsive" />
+            <Select allowClear placeholder="Статус" options={options(ORDER_STATUS)} style={{ minWidth: 180 }} />
           </Form.Item>
           <Form.Item name="range">
             <DatePicker.RangePicker format="DD.MM.YYYY" placeholder={["С", "По"]} />
@@ -135,10 +117,10 @@ const OrderTable = () => {
             )}
           />
         )}
-        {wide && <Table.Column<Order> dataIndex="number" title="№" sorter />}
+        {wide && <Table.Column<Order> dataIndex="number" title="№" />}
         {wide && (
           <>
-          <Table.Column<Order> dataIndex="createdAt" title="Дата" sorter render={dateTime} />
+          <Table.Column<Order> dataIndex="createdAt" title="Дата" render={dateTime} />
           <Table.Column<Order>
           dataIndex="customerName"
           title="Клиент"
@@ -166,7 +148,7 @@ const OrderTable = () => {
           )}
         />
           <Table.Column<Order> dataIndex="fulfilment" title="Получение" render={(v: Order["fulfilment"]) => FULFILMENT[v]} />
-          <Table.Column<Order> dataIndex="total" title="Сумма" align="right" sorter render={(v, r) => tenge(v, r.approximate)} />
+          <Table.Column<Order> dataIndex="total" title="Сумма" align="right" render={(v, r) => tenge(v, r.approximate)} />
           <Table.Column<Order>
           key="actions"
           render={(_, r) => (
