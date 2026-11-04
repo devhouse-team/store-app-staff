@@ -43,7 +43,7 @@ export default defineConfig({
           { src: "pwa-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
         ],
       },
-      workbox: { maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, navigateFallbackDenylist: [/^\/api\//] },
+      workbox: { maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, navigateFallbackDenylist: [/^\/api\//, /^\/privacy/] },
     }),
   ],
 });
