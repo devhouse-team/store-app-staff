@@ -42,10 +42,12 @@ export const formatAddress = (a: J) =>
 
 const pack = (k: J) => ({
   id: String(k.id), label: k.name, baseQty: num(k.qty_in_base), retailPrice: num(k.retail_price), wholesalePrice: num(k.wholesale_price),
+  wholesaleMinQty: num(k.wholesale_min_qty),
   visibility: k.visibility, step: num(k.step), minQty: num(k.min_qty),
 });
 const packApi = (k: Vars) => ({
   name: k.label, qty_in_base: k.baseQty, retail_price: k.retailPrice ?? null, wholesale_price: k.wholesalePrice ?? null,
+  wholesale_min_qty: k.wholesaleMinQty ?? null,
   visibility: k.visibility, step: k.step, min_qty: k.minQty,
 });
 const PRODUCT_FIELDS: Record<string, [string, ((x: any) => unknown)?]> = {

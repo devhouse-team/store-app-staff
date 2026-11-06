@@ -74,6 +74,7 @@ const emptyPack: PackValues = {
   baseQty: 1,
   retailPrice: null,
   wholesalePrice: null,
+  wholesaleMinQty: null,
   visibility: "both",
   step: 1,
   minQty: 1,
@@ -174,10 +175,27 @@ const PacksField = ({ form }: { form: FormInstance<Values> }) => (
                         <Form.Item
                           label="Оптовая цена, ₸"
                           name={[name, "wholesalePrice"]}
-                          dependencies={[at("visibility")]}
-                          rules={[{ required: hasWholesale(vis()), message: "Укажите оптовую цену" }]}
+                          dependencies={[at("visibility"), at("wholesaleMinQty")]}
+                          rules={[
+                            { required: hasWholesale(vis()), message: "Укажите оптовую цену" },
+                            {
+                              validator: async (_, v?: number | null) => {
+                                if (v == null && form.getFieldValue(at("wholesaleMinQty")) != null) throw new Error("Укажите оптовую цену");
+                              },
+                            },
+                          ]}
                         >
                           <InputNumber min={0} precision={0} disabled={!hasWholesale(vis())} style={{ width: "100%" }} />
+                        </Form.Item>
+                      </Col>
+                      <Col xs={12} sm={12} md={6}>
+                        <Form.Item
+                          label="Опт от, шт"
+                          name={[name, "wholesaleMinQty"]}
+                          extra="Пусто — оптовая цена только для одобренных оптовиков"
+                          rules={[{ type: "number", min: 0.001, message: "Больше 0" }]}
+                        >
+                          <InputNumber min={0} disabled={!hasWholesale(vis())} style={{ width: "100%" }} />
                         </Form.Item>
                       </Col>
                     </>

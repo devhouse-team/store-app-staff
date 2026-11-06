@@ -40,6 +40,7 @@ export interface Pack {
   baseQty: number; // amount of base unit in one pack
   retailPrice: number | null;
   wholesalePrice: number | null;
+  wholesaleMinQty: number | null; // retail qty from which wholesalePrice applies; null = wholesale accounts only
   visibility: PackVisibility;
   step: number;
   minQty: number;

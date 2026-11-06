@@ -101,23 +101,25 @@ assert.deepEqual(calls[0].body, { items: [{ id: 71, actual_weight: 2.1 }] });
 // --- products: "all rows" paging, create with packs, pack diff on update, bulk
 const product = { id: 3, external_id: null, source: "manual", sku: "S1", name: "Сыр", category_id: 2, barcode: null, brand: null, base_unit: "kg",
   is_weighted: true, weight_step: "0.100", is_perishable: true, shelf_life_days: 7, preorder_allowed: false, description: null, images: [], is_active: true,
-  packs: [{ id: 10, external_id: null, name: "1 кг", qty_in_base: "1.000", retail_price: "5750.00", wholesale_price: null, visibility: "retail", step: "1.000", min_qty: "1.000", sort_order: 0, is_active: true },
-    { id: 11, external_id: null, name: "5 кг", qty_in_base: "5.000", retail_price: null, wholesale_price: "25000.00", visibility: "wholesale", step: "1.000", min_qty: "1.000", sort_order: 1, is_active: true }] };
+  packs: [{ id: 10, external_id: null, name: "1 кг", qty_in_base: "1.000", retail_price: "5750.00", wholesale_price: null, wholesale_min_qty: null, visibility: "retail", step: "1.000", min_qty: "1.000", sort_order: 0, is_active: true },
+    { id: 11, external_id: null, name: "5 кг", qty_in_base: "5.000", retail_price: null, wholesale_price: "25000.00", wholesale_min_qty: "12.000", visibility: "wholesale", step: "1.000", min_qty: "1.000", sort_order: 1, is_active: true }] };
 reset({ "GET /api/v1/admin/catalog/products": { items: [product], total: 1, page: 1, size: 100 }, "GET /api/v1/admin/catalog/products/3": product,
   "PATCH /api/v1/admin/catalog/products/3": product, "PATCH /api/v1/admin/catalog/packs/10": {}, "DELETE /api/v1/admin/catalog/packs/11": null,
   "POST /api/v1/admin/catalog/products/3/packs": {}, "POST /api/v1/admin/catalog/products": product, "POST /api/v1/admin/catalog/products/bulk": { updated: 1 } });
 const all = await dp.getList({ resource: "products", pagination: { mode: "off" }, filters: [{ operator: "or", value: [{ field: "name", operator: "contains", value: "сыр" }] }, { field: "hidden", operator: "eq", value: false }] });
 assert.deepEqual(calls[0].query, { q: "сыр", is_active: "true", page: "1", size: "100" });
 const p = all.data[0] as any;
+assert.equal(p.packs[0].wholesaleMinQty, null); assert.equal(p.packs[1].wholesaleMinQty, 12);
 assert.equal(p.baseUnit, "кг"); assert.equal(p.packs[0].retailPrice, 5750); assert.equal(p.hidden, false);
 reset({ ...routes });
-const packV = (id: string | undefined, label: string) => ({ id, label, baseQty: 1, retailPrice: 100, wholesalePrice: null, visibility: "retail", step: 1, minQty: 1 });
+const packV = (id: string | undefined, label: string) => ({ id, label, baseQty: 1, retailPrice: 100, wholesalePrice: null, wholesaleMinQty: null, visibility: "retail", step: 1, minQty: 1 });
 await dp.update({ resource: "products", id: "3", variables: { name: "Сыр", hidden: true, baseUnit: "кг", imageUrl: null, packs: [packV("10", "1 кг"), packV(undefined, "2 кг")] } });
 assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), [
   "GET /api/v1/admin/catalog/products/3", "PATCH /api/v1/admin/catalog/products/3", "DELETE /api/v1/admin/catalog/packs/11",
   "PATCH /api/v1/admin/catalog/packs/10", "POST /api/v1/admin/catalog/products/3/packs", "GET /api/v1/admin/catalog/products/3",
 ]);
 assert.deepEqual(calls[1].body, { name: "Сыр", base_unit: "kg", is_active: false });
+assert.equal((calls[3].body as any).wholesale_min_qty, null);
 reset({ ...routes });
 await dp.create({ resource: "products", variables: { sku: "S2", name: "Х", categoryId: "2", baseUnit: "шт", packs: [packV(undefined, "шт")] } });
 assert.equal((calls[0].body as any).packs[0].name, "шт");
