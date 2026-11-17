@@ -34,7 +34,7 @@ export const refreshCsrf = async () => {
 };
 
 export type Query = Record<string, string | number | boolean | null | undefined>;
-type Opts = { query?: Query; body?: unknown };
+type Opts = { query?: Query; body?: unknown; keepalive?: boolean };
 
 const buildUrl = (path: string, query?: Query) => {
   const url = new URL(API_URL + path, globalThis.location?.origin ?? "http://localhost");
@@ -42,7 +42,7 @@ const buildUrl = (path: string, query?: Query) => {
   return url;
 };
 
-const send = (method: string, path: string, { query, body }: Opts) => {
+const send = (method: string, path: string, { query, body, keepalive }: Opts) => {
   const raw = body instanceof FormData || body instanceof URLSearchParams;
   const headers: Record<string, string> = {};
   if (body !== undefined && !raw) headers["Content-Type"] = "application/json";
@@ -51,6 +51,7 @@ const send = (method: string, path: string, { query, body }: Opts) => {
     method,
     credentials: "include",
     headers,
+    keepalive, // survives page unload (receipt edits flushed on pagehide)
     body: body === undefined ? undefined : raw ? (body as BodyInit) : JSON.stringify(body),
   });
 };
@@ -59,10 +60,10 @@ const toError = async (res: Response): Promise<HttpError> => {
   const j = await res.json().catch(() => null);
   const e = j?.error;
   const message = e?.message ?? (typeof j?.detail === "string" ? j.detail : null) ?? (res.statusText || "Ошибка сервера");
-  return { message, statusCode: res.status, errors: e?.details };
+  return { message, statusCode: res.status, errors: e?.details, code: e?.code };
 };
 
-/** JSON request; throws Refine HttpError ({ message, statusCode }) built from the {"error": {...}} envelope. */
+/** JSON request; throws Refine HttpError ({ message, statusCode, code }) built from the {"error": {...}} envelope. */
 export async function api<T = unknown>(method: string, path: string, opts: Opts = {}): Promise<T> {
   let res = await send(method, path, opts);
   // Stale CSRF token (rotated server-side or lost) → refresh once and retry.

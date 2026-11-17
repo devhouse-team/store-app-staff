@@ -23,7 +23,7 @@ import type { FormInstance, FormProps } from "antd";
 import { useEffect, useState } from "react";
 import type { Category, Pack, Product } from "../../types";
 import { categoryTreeData } from "../categories/tree";
-import { UNITS, VISIBILITY, hasRetail, hasWholesale, normalizePacks } from "./packs";
+import { UNITS, VISIBILITY, emptyPack, hasRetail, hasWholesale, normalizePacks } from "./packs";
 
 type PackValues = Omit<Pack, "id"> & { id?: string };
 // imageUrl: existing photo URL, a newly picked File (uploaded by the data provider after save) or null (remove).
@@ -69,16 +69,6 @@ const ImageField = ({ value, onChange }: { value?: string | File | null; onChang
   );
 };
 
-const emptyPack: PackValues = {
-  label: "",
-  baseQty: 1,
-  retailPrice: null,
-  wholesalePrice: null,
-  wholesaleMinQty: null,
-  visibility: "both",
-  step: 1,
-  minQty: 1,
-};
 
 const PacksField = ({ form }: { form: FormInstance<Values> }) => (
   <Form.List

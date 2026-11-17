@@ -29,6 +29,8 @@ import { ProductCreate, ProductEdit, ProductList } from "./pages/products";
 import { CategoryList } from "./pages/categories";
 import { ImportList } from "./pages/imports";
 import { StockList } from "./pages/stock";
+import { ReceiptList, ReceiptShow } from "./pages/receipts";
+import { SupplierList } from "./pages/suppliers";
 import { CustomerList, CustomerShow } from "./pages/customers";
 import { WholesaleList, WholesaleShow } from "./pages/wholesale";
 import { ConditionCreate, ConditionEdit, ConditionList } from "./pages/conditions";
@@ -81,6 +83,11 @@ export default function App() {
                   </Route>
                   <Route path="/categories" element={<CategoryList />} />
                   <Route path="/stock" element={<StockList />} />
+                  <Route path="/receipts">
+                    <Route index element={<ReceiptList />} />
+                    <Route path=":id" element={<ReceiptShow />} />
+                  </Route>
+                  <Route path="/suppliers" element={<SupplierList />} />
                   <Route path="/imports" element={<ImportList />} />
                   <Route path="/customers">
                     <Route index element={<CustomerList />} />

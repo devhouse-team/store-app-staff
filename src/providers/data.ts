@@ -4,7 +4,7 @@
 // Sorting is server-defined (no sort params in the API); unsupported filters are ignored.
 import type { BaseRecord, CrudFilter, DataProvider, LogicalFilter } from "@refinedev/core";
 import dayjs from "dayjs";
-import type { Condition, ConditionType, Order, Unit } from "../types";
+import type { Condition, ConditionType, Order, Product, Receipt, ReceiptDefaults, Unit } from "../types";
 import { API_URL, api, type Query } from "./api";
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- backend JSON is mapped field by field below */
@@ -75,7 +75,32 @@ type Res = {
   getOne?: (id: string) => Promise<J>;
 };
 
+const receiptItem = (i: J) => ({
+  id: String(i.id), productId: String(i.product_id), productName: i.product_name, sku: i.sku, baseUnit: UNIT[i.base_unit] ?? i.base_unit,
+  packId: sid(i.pack_id), packName: i.pack_name, packQty: num(i.pack_qty), unitCost: num(i.unit_cost),
+  baseQty: num(i.base_qty), lineTotal: num(i.line_total),
+});
+const orNull = (x: unknown) => (typeof x === "string" ? x.trim() : x) || null;
+
 const resources: Record<string, Res> = {
+  suppliers: {
+    path: "/admin/suppliers",
+    toUi: (s) => ({
+      id: String(s.id), name: s.name, phone: s.phone ?? "", bin: s.bin ?? "", comment: s.comment ?? "", active: s.is_active, createdAt: s.created_at,
+    }),
+    toApi: (v) => rename(v, { name: ["name", (x) => x?.trim()], phone: ["phone", orNull], bin: ["bin", orNull], comment: ["comment", orNull], active: ["is_active"] }),
+    filters: { name: "q", active: "is_active" },
+  },
+  receipts: {
+    path: "/admin/receipts",
+    toUi: (r): Receipt => ({
+      id: String(r.id), supplierId: String(r.supplier_id), supplierName: r.supplier_name, docNumber: r.doc_number, docDate: r.doc_date,
+      status: r.status, staffId: sid(r.staff_id), comment: r.comment, postedAt: r.posted_at, createdAt: r.created_at,
+      total: num(r.total) ?? 0, items: (r.items ?? []).map(receiptItem),
+    }),
+    toApi: (v) => rename(v, { supplierId: ["supplier_id", iid], docNumber: ["doc_number", orNull], docDate: ["doc_date", day], comment: ["comment", orNull] }),
+    filters: { supplierId: "supplier_id", status: "status", docDate: (v, op) => [op.startsWith("g") ? "date_from" : "date_to", day(v)] },
+  },
   categories: {
     path: "/admin/catalog/categories",
     unpaged: true,
@@ -131,8 +156,10 @@ const resources: Record<string, Res> = {
   stock_movements: {
     path: "/admin/stock/movements",
     toUi: (m) => ({
-      id: String(m.id), productId: String(m.product_id), delta: num(m.delta), orderId: sid(m.order_id), staffId: sid(m.staff_id),
-      reason: [MOVEMENT_REASON[m.reason] ?? m.reason, m.comment].filter(Boolean).join(": "), createdAt: m.created_at,
+      id: String(m.id), productId: String(m.product_id), delta: num(m.delta), orderId: sid(m.order_id), receiptId: sid(m.receipt_id),
+      staffId: sid(m.staff_id), createdAt: m.created_at,
+      // receipt movements carry «Приёмка #id» as the comment; the page renders that as a link instead
+      reason: m.receipt_id ? (MOVEMENT_REASON[m.reason] ?? m.reason) : [MOVEMENT_REASON[m.reason] ?? m.reason, m.comment].filter(Boolean).join(": "),
     }),
     filters: { productId: "product_id", orderId: "order_id" },
   },
@@ -302,6 +329,35 @@ const resources: Record<string, Res> = {
       return api("PUT", "/admin/settings", { body });
     },
   },
+};
+
+// Receipt line actions: each returns the whole receipt (server-computed totals) → callers replace state with it.
+const toReceipt = (r: J) => resources.receipts.toUi(r) as Receipt;
+const dec = (x: unknown) => String(x); // decimals go to the API as strings
+const rpath = (id: string) => `/admin/receipts/${id}`;
+type Line = { packId: string; packQty: number; unitCost: number };
+export const receiptApi = {
+  get: (id: string) => api<J>("GET", rpath(id)).then(toReceipt),
+  // unit_cost is optional: a scanned line is created at once and priced later
+  addItem: (id: string, v: Omit<Line, "unitCost"> & { productId: string; unitCost?: number }) =>
+    api<J>("POST", `${rpath(id)}/items`, {
+      body: {
+        product_id: Number(v.productId), pack_id: Number(v.packId), pack_qty: dec(v.packQty),
+        ...(v.unitCost != null && { unit_cost: dec(v.unitCost) }),
+      },
+    }).then(toReceipt),
+  updateItem: (id: string, itemId: string, v: Partial<Line>, keepalive = false) =>
+    api<J>("PATCH", `${rpath(id)}/items/${itemId}`, {
+      keepalive, body: rename(v, { packId: ["pack_id", iid], packQty: ["pack_qty", dec], unitCost: ["unit_cost", dec] }),
+    }).then(toReceipt),
+  removeItem: (id: string, itemId: string) => api<J>("DELETE", `${rpath(id)}/items/${itemId}`).then(toReceipt),
+  post: (id: string) => api<J>("POST", `${rpath(id)}/post`).then(toReceipt),
+  defaults: async (productId: string, supplierId: string): Promise<ReceiptDefaults> => {
+    const d = await api<J>("GET", "/admin/receipts/defaults", { query: { product_id: productId, supplier_id: supplierId } });
+    return { packId: sid(d.pack_id), lastCost: d.last_cost ? { packId: sid(d.last_cost.pack_id), unitCost: Number(d.last_cost.unit_cost) } : null };
+  },
+  byBarcode: (code: string) =>
+    api<J>("GET", `/admin/catalog/products/by-barcode/${encodeURIComponent(code.trim())}`).then((p) => resources.products.toUi(p) as Product),
 };
 
 /** Uploads a newly picked photo (File) or removes the photos when the field was cleared. */

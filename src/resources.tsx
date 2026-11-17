@@ -21,6 +21,8 @@ export const resources = [
   { name: "products", list: "/products", create: "/products/create", edit: "/products/:id/edit", meta: { label: "Товары", parent: "catalog", canDelete: true } },
   { name: "categories", list: "/categories", meta: { label: "Категории", parent: "catalog", canDelete: true } },
   { name: "stock", list: "/stock", meta: { label: "Остатки", parent: "catalog" } },
+  { name: "receipts", list: "/receipts", show: "/receipts/:id", meta: { label: "Приёмка", parent: "catalog" } },
+  { name: "suppliers", list: "/suppliers", meta: { label: "Поставщики", parent: "catalog" } },
   { name: "imports", list: "/imports", meta: { label: "Импорт / экспорт", parent: "catalog" } },
   { name: "stock_movements", meta: { hide: true } },
   group("clients", "Покупатели", <TeamOutlined />),

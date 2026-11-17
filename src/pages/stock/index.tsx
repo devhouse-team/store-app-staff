@@ -233,7 +233,14 @@ const MovementsTable = () => {
           {
             title: "Причина",
             dataIndex: "reason",
-            render: (r: string, m: StockMovement) => (m.orderId ? <>{r} · <Link to={`/orders/${m.orderId}`}>заказ</Link></> : r),
+            render: (r: string, m: StockMovement) =>
+              m.receiptId ? (
+                <>{r} · <Link to={`/receipts/${m.receiptId}`}>Приёмка #{m.receiptId}</Link></>
+              ) : m.orderId ? (
+                <>{r} · <Link to={`/orders/${m.orderId}`}>заказ</Link></>
+              ) : (
+                r
+              ),
           },
         ]}
       />
