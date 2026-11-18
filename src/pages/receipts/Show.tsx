@@ -1,5 +1,5 @@
 import { Show } from "@refinedev/antd";
-import { useGetIdentity, useSelect, type HttpError } from "@refinedev/core";
+import { useGetIdentity, useNavigation, useSelect, type HttpError } from "@refinedev/core";
 import { DeleteOutlined, LoadingOutlined, MinusOutlined, PlusOutlined, ScanOutlined } from "@ant-design/icons";
 import { App, Button, Card, DatePicker, Grid, Input, InputNumber, Popconfirm, Result, Select, Space, Table, Tag, Typography, theme, type RefSelectProps } from "antd";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -47,6 +47,7 @@ const ReceiptScreen = ({ id }: { id: string }) => {
   const canWrite = useCan("stock.write");
   const canCatalogRead = useCan("catalog.read");
   const { data: me } = useGetIdentity<StaffIdentity>();
+  const { list } = useNavigation();
   const rc = useReceipt(id, canCatalogRead);
   const { receipt, pendingView, saving, errorItemId, fieldErrors, lastCost, priceCheck, focusId } = rc;
   const readOnly = !receipt || receipt.status === "posted" || !canWrite;
@@ -468,7 +469,7 @@ const ReceiptScreen = ({ id }: { id: string }) => {
           background: token.colorBgContainer, borderTop: `1px solid ${token.colorBorderSecondary}`,
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: actions ? 8 : 0 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
           <Typography.Text className="num" strong>
             {n} {plural(n, "позиция", "позиции", "позиций")} · {tenge(receipt.total)}
           </Typography.Text>
@@ -483,6 +484,11 @@ const ReceiptScreen = ({ id }: { id: string }) => {
               Провести
             </Button>
           </div>
+        )}
+        {!actions && (
+          <Button type="primary" size="large" block onClick={() => list("receipts")}>
+            К списку приёмок
+          </Button>
         )}
       </div>
 
