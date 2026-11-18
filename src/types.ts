@@ -82,6 +82,7 @@ export interface StockMovement {
   delta: number;
   reason: string; // label + comment, e.g. 'Корректировка: пересорт'
   orderId: string | null;
+  receiptId: string | null;
   staffId: string | null;
   createdAt: string;
 }
@@ -267,4 +268,51 @@ export interface Settings {
   supportPhone: string | null;
   supportEmail: string | null;
   supportTelegram: string | null;
+}
+
+export type ReceiptStatus = "draft" | "posted";
+
+export interface Supplier {
+  id: string;
+  name: string;
+  phone: string;
+  bin: string; // 12 digits or ''
+  comment: string;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface ReceiptItem {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  baseUnit: string;
+  packId: string | null;
+  packName: string | null;
+  packQty: number;
+  unitCost: number | null; // per pack; null = not priced yet
+  baseQty: number; // server-computed
+  lineTotal: number | null; // server-computed; null while unpriced
+}
+
+/** Supplier receipt («Приёмка»). Totals come from the server only. */
+export interface Receipt {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  docNumber: string | null;
+  docDate: string;
+  status: ReceiptStatus;
+  staffId: string | null;
+  comment: string | null;
+  postedAt: string | null;
+  createdAt: string;
+  total: number;
+  items: ReceiptItem[];
+}
+
+export interface ReceiptDefaults {
+  packId: string | null; // last pack this staff member used for the product
+  lastCost: { packId: string | null; unitCost: number } | null; // last posted price from the supplier
 }

@@ -1,5 +1,5 @@
 // Staff auth (B19): session cookie from POST /admin/auth/login, CSRF token kept by ./api.
-import type { AuthProvider } from "@refinedev/core";
+import { usePermissions, type AuthProvider } from "@refinedev/core";
 import { api, hasCsrf, refreshCsrf, setCsrf } from "./api";
 
 export type StaffIdentity = {
@@ -70,3 +70,6 @@ export const authProvider: AuthProvider = {
 /** Own display name: PATCH /users/{username} (self-update is allowed for every user). */
 export const saveStaffProfile = (username: string, name: string) =>
   api("PATCH", `/users/${encodeURIComponent(username)}`, { body: { name } });
+
+/** Permission check for gating write controls (superusers get every permission from /admin/staff/me). */
+export const useCan = (p: string) => !!usePermissions<string[]>({}).data?.includes(p);

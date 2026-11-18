@@ -14,3 +14,14 @@ export const normalizePacks = <P extends Omit<Pack, "id"> & { id?: string }>(pac
     retailPrice: hasRetail(p.visibility) ? (p.retailPrice ?? null) : null,
     wholesalePrice: hasWholesale(p.visibility) ? (p.wholesalePrice ?? null) : null,
   }));
+
+export const emptyPack: Omit<Pack, "id"> = {
+  label: "",
+  baseQty: 1,
+  retailPrice: null,
+  wholesalePrice: null,
+  wholesaleMinQty: null,
+  visibility: "both",
+  step: 1,
+  minQty: 1,
+};

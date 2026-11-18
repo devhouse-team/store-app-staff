@@ -8,6 +8,7 @@ import type {
   OrderStatus,
   PaymentMethod,
   PaymentStatus,
+  ReceiptStatus,
   WholesaleStatus,
 } from "../types";
 
@@ -18,7 +19,18 @@ export const qty = (v: number, unit: string) => `${new Intl.NumberFormat("ru-RU"
 export const dateTime = (iso: string | null | undefined) => (iso ? dayjs(iso).format("DD.MM.YYYY HH:mm") : "—");
 export const date = (iso: string | null | undefined) => (iso ? dayjs(iso).format("DD.MM.YYYY") : "—");
 
+/** Russian plural: plural(5, "позиция", "позиции", "позиций") → "позиций". */
+export const plural = (n: number, one: string, few: string, many: string) => {
+  const m10 = n % 10, m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? few : many;
+};
+
 type Tag = { label: string; color: string };
+
+export const RECEIPT_STATUS: Record<ReceiptStatus, Tag> = {
+  draft: { label: "Черновик", color: "gold" },
+  posted: { label: "Проведена", color: "green" },
+};
 
 export const ORDER_STATUS: Record<OrderStatus, Tag> = {
   new: { label: "Новый", color: "blue" },
